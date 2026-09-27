@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LAIN STUDIO</title>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="catalog.css">
+<style>
+  :root{
+    --bg:#0C0B0B;
+    --panel:#141313;
+    --border:#242424;
+    --border-soft:#1A1A1A;
+    --text:#E6E6E6;
+    --muted:#A3A3A3;
+    --muted-2:#8C8C8C;
+    --accent:#6BAF35;
+  }
+  html,body{overflow-x:clip;}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-serif;}
+  a{color:var(--text);text-decoration:none;}
+  a:hover{color:var(--accent);}
+  .wrap{max-width:1440px;margin:0 auto;padding:0 64px;}
+
+  header{
+    height:88px;display:flex;align-items:center;justify-content:space-between;
+    border-bottom:0px solid var(--border-soft);
+  }
+  .logo{display:flex;align-items:center;gap:18px;}
+  .logo-icon{display:block;height:43px;width:auto;}
+  .logo span{
+    font-family:'Montserrat',sans-serif;font-weight:500;font-size:26px;
+    letter-spacing:0.42em;color:var(--text);
+  }
+  .logo-suffix{
+    font-size:15px;font-weight:400;letter-spacing:0.32em;color:var(--muted);
+  }
+  nav{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  nav a{
+    height:44px;padding:0 22px;display:flex;align-items:center;
+    border-radius:2px;font-size:13px;
+    font-weight:500;letter-spacing:0.18em;
+  }
+
+  .hero{
+    position:relative;isolation:isolate;
+    min-height:500px;padding:64px 0;display:flex;align-items:center;
+    justify-content:space-between;gap:40px;flex-wrap:wrap;
+  }
+  .hero::before{
+    content:"";position:absolute;z-index:-1;top:0;bottom:0;left:50%;
+    width:100vw;transform:translateX(-50%);
+    background:url('img/lain-bg-skyline-header.png') center center / cover no-repeat;
+  }
+  .hero-copy{max-width:640px;display:flex;flex-direction:column;gap:28px;}
+  .eyebrow{font-size:13px;font-weight:500;letter-spacing:0.3em;color:var(--accent);}
+  h1{
+    margin:0;font-family:'Montserrat',sans-serif;font-weight:500;
+    font-size:60px;line-height:1.08;letter-spacing:0.02em;color:var(--text);
+  }
+  .tagline{font-size:18px;line-height:1.5;color:var(--muted);}
+  .cta-row{display:flex;gap:14px;margin-top:8px;flex-wrap:wrap;}
+  .btn-solid, .btn-outline{
+    height:52px;padding:0 30px;display:flex;align-items:center;
+    border-radius:2px;font-size:13px;font-weight:600;letter-spacing:0.2em;
+  }
+  .btn-solid{background:var(--accent);color:var(--bg);}
+  .btn-solid:hover{color:var(--bg);opacity:0.9;}
+  .btn-outline{border:1px solid #3A3A3A;color:var(--text);}
+
+  .hero-logo{flex-shrink:0;width:420px;height:auto;max-width:100%;}
+
+  .identity-transition{padding:80px 0 0;}
+  .identity-transition__header{display:flex;align-items:center;justify-content:space-between;gap:24px;}
+  .identity-transition__eyebrow,
+  .identity-transition__index,
+  .identity-transition__connected,
+  .identity-transition__metadata{
+    font-size:13px;font-weight:500;letter-spacing:0.18em;color:var(--muted-2);
+  }
+  .identity-transition__eyebrow{color:var(--text);}
+  .identity-transition__index{font-size:12px;letter-spacing:0.16em;}
+  .identity-transition__statement{
+    max-width:1000px;margin:40px 0 0;text-align:left;
+    font-family:'Montserrat',sans-serif;font-size:42px;line-height:1.3;
+    font-weight:400;color:var(--muted);
+  }
+  .identity-diagram{
+    display:grid;grid-template-columns:minmax(0,1fr) 64px minmax(0,1fr);
+    grid-template-rows:repeat(3,56px);align-items:center;
+    width:100%;margin:48px 0 32px;
+  }
+  .identity-diagram__branch{display:flex;align-items:center;gap:0;min-width:0;}
+  .identity-diagram__label{
+    flex:0 0 auto;font-size:14px;font-weight:500;letter-spacing:0.14em;
+    margin-right:20px;color:var(--muted);white-space:nowrap;
+  }
+  .identity-diagram__line{height:1px;flex:1 1 auto;background:var(--border);margin-right:-33px;}
+  .identity-diagram__junction{
+    position:relative;grid-column:2;grid-row:1 / 4;justify-self:center;
+    width:64px;height:100%;display:flex;align-items:center;justify-content:center;
+  }
+  .identity-diagram__junction::before{
+    content:"";position:absolute;left:50%;top:28px;bottom:28px;width:1px;
+    transform:translateX(-50%);background:var(--border);
+  }
+  .identity-diagram__junction img{
+    position:relative;width:40px;height:40px;object-fit:contain;
+    padding:2px;background:var(--bg);
+  }
+  .identity-diagram__expression{
+    grid-column:3;grid-row:2;display:flex;align-items:center;gap:14px;min-width:0;
+  }
+  .identity-diagram__expression .identity-diagram__line{background:var(--accent);opacity:.48;margin-left:-33px;margin-right:-6px;}
+  .identity-transition__connected{text-align:left;color:var(--text);font-size:14px;}
+  .identity-transition__metadata{
+    display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;
+    width:100%;margin:40px 0 0;font-size:13px;line-height:1.6;
+    letter-spacing:0.16em;
+  }
+  .identity-transition__metadata span{min-width:0;}
+  .identity-transition__metadata span:nth-child(even){text-align:right;}
+
+  @media (max-width:1100px){
+    .hero-logo{display:none;}
+  }
+
+  .sections{
+    padding:0 0 64px 0;display:flex;gap:24px;flex-wrap:wrap;
+  }
+  .card{
+    flex:1 1 300px;min-height:300px;padding:28px;background:var(--panel);
+    border:1px solid var(--border);border-radius:2px;display:flex;
+    flex-direction:column;justify-content:space-between;gap:20px;
+  }
+  .card-top{display:flex;justify-content:space-between;align-items:flex-start;}
+  .card-tag{font-size:12px;font-weight:500;letter-spacing:0.28em;color:var(--accent);}
+  .card h2{
+    margin:0;font-family:'Montserrat',sans-serif;font-weight:500;
+    font-size:30px;letter-spacing:0.06em;
+  }
+  .card p{margin:8px 0 0 0;font-size:16px;line-height:1.5;color:var(--muted);}
+  .card-link{
+    height:46px;padding:0 22px;display:flex;align-items:center;
+    justify-content:space-between;border:1px solid var(--accent);
+    border-radius:2px;font-size:13px;font-weight:600;letter-spacing:0.2em;
+    color:var(--accent);
+  }
+  .card-link:hover{color:var(--accent);background:rgba(107,175,53,0.08);}
+
+  footer{
+    height:72px;display:flex;align-items:center;justify-content:space-between;
+    border-top:1px solid var(--border-soft);flex-wrap:wrap;gap:8px;
+  }
+  .footer-loc{font-size:12px;letter-spacing:0.2em;color:var(--muted-2);}
+  .footer-prompt{font-size:14px;color:var(--text);display:flex;align-items:center;gap:6px;}
+  .cursor{display:inline-block;width:8px;height:14px;background:var(--accent);}
+
+  @media (max-width:960px){
+    .wrap{padding:0 24px;}
+    header{height:auto;flex-direction:column;align-items:center;gap:14px;padding:16px 24px;}
+    .logo{gap:12px;min-width:0;}
+    .logo>span{font-size:22px;letter-spacing:0.24em;white-space:nowrap;}
+    .logo-suffix{font-size:12px;letter-spacing:0.16em;}
+    nav{width:100%;justify-content:center;gap:8px;flex-wrap:nowrap;}
+    nav a{flex:0 0 auto;padding:0 10px;white-space:nowrap;}
+    h1{font-size:clamp(30px,4.2vw,40px);}
+    .hero{padding:40px 0;}
+    .hero-copy{width:100%;max-width:640px;gap:22px;}
+    .identity-transition{padding:56px 0 0;}
+    .identity-transition__header{gap:16px;}
+    .identity-transition__eyebrow{font-size:12px;}
+    .identity-transition__index{font-size:11px;}
+    .identity-transition__statement{max-width:760px;margin-top:28px;font-size:34px;}
+    .identity-diagram{grid-template-columns:minmax(0,1fr) 42px minmax(0,1fr);grid-template-rows:repeat(3,48px);margin:38px 0 26px;}
+    .identity-diagram__junction{width:42px;}
+    .identity-diagram__junction::before{top:24px;bottom:24px;}
+    .identity-diagram__branch{gap:0;}
+    .identity-diagram__expression{gap:12px;}
+    .identity-diagram__label{margin-right:12px;font-size:11px;letter-spacing:0.1em;}
+    .identity-diagram__line{margin-right:-22px;}
+    .identity-diagram__expression .identity-diagram__line{margin-left:-22px;margin-right:-6px;}
+    .identity-diagram__junction img{width:30px;height:30px;}
+    .identity-transition__connected{font-size:13px;}
+    .identity-transition__metadata{margin-top:32px;column-gap:14px;font-size:11px;letter-spacing:0.12em;}
+  }
+  @media (max-width:760px){
+    .identity-transition{padding-bottom:0;}
+  }
+  @media (max-width:400px){
+    .identity-transition__statement{font-size:30px;}
+    .logo{gap:8px;}
+    .logo-icon{height:34px;}
+    .logo>span{font-size:18px;letter-spacing:0.14em;}
+    .logo-suffix{font-size:10px;letter-spacing:0.08em;}
+    nav{gap:4px;}
+    nav a{padding:0 7px;}
+    .hero-copy{gap:18px;}
+  }
+  @media (max-width:340px){
+    .logo{gap:6px;}
+    .logo-icon{height:30px;}
+    .logo>span{font-size:15px;letter-spacing:0.08em;}
+    .logo-suffix{font-size:8px;letter-spacing:0.05em;}
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <a href="#" class="logo" aria-label="LAIN Studio inicio">
+      <img src="img/lain-icon.png" alt="" width="52" height="43" class="logo-icon">
+      <span>LAIN <span class="logo-suffix">STUDIO</span></span>
+    </a>
+    <nav>
+      <a href="#store">STORE</a>
+      <a href="#studio">STUDIO</a>
+      <a href="#about">ABOUT</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <div class="hero-copy">
+      <div class="eyebrow">CLOTHING & DIGITAL WORK</div>
+      <h1>Lain isn't a product.<br>Lain is what you make.</h1>
+      <div class="tagline">We are all connected.</div>
+      <div class="cta-row">
+        <a href="#sections" class="btn-solid">EXPLORE STORE</a>
+        <a href="#about" class="btn-outline">ABOUT LAIN</a>
+      </div>
+    </div>
+    <img src="img/lain-icon.png" alt="Logo LAIN" class="hero-logo" width="420" height="345">
+  </section>
+
+  <section class="identity-transition" aria-label="LAIN identity study">
+    <div class="identity-transition__header">
+      <span class="identity-transition__eyebrow">LAIN / IDENTITY</span>
+      <span class="identity-transition__index">001</span>
+    </div>
+    <p class="identity-transition__statement">A space for identity, connection and expression.</p>
+    <div class="identity-diagram" aria-label="Identity, connection, and creation meet at LAIN and extend to expression">
+      <div class="identity-diagram__branch" style="grid-column:1;grid-row:1">
+        <span class="identity-diagram__label">IDENTITY</span><span class="identity-diagram__line" aria-hidden="true"></span>
+      </div>
+      <div class="identity-diagram__branch" style="grid-column:1;grid-row:2">
+        <span class="identity-diagram__label">CONNECTION</span><span class="identity-diagram__line" aria-hidden="true"></span>
+      </div>
+      <div class="identity-diagram__branch" style="grid-column:1;grid-row:3">
+        <span class="identity-diagram__label">CREATION</span><span class="identity-diagram__line" aria-hidden="true"></span>
+      </div>
+      <div class="identity-diagram__junction" aria-hidden="true"><img src="img/lain-icon.png" alt=""></div>
+      <div class="identity-diagram__expression" aria-hidden="true">
+        <span class="identity-diagram__line"></span><span class="identity-diagram__label">EXPRESSION</span>
+      </div>
+    </div>
+    <div class="identity-transition__connected">WE ARE ALL CONNECTED.</div>
+    <div class="identity-transition__metadata">
+      <span>BUENOS AIRES / ARGENTINA</span><span>2026</span>
+      <span>34°36′S 58°22′W</span><span>LAIN STUDIO</span>
+    </div>
+  </section>
+
+  <section id="store" class="catalog" aria-label="LAIN clothing collection">
+    <span id="sections" class="catalog-anchor" aria-hidden="true"></span>
+    <div id="catalog-content" aria-live="polite"></div>
+  </section>
+
+  <!-- Homepage service cards are temporarily hidden; retain for a future Studio section.
+  <section id="sections" class="sections">
+
+    <article id="software" class="card">
+      <div class="card-top">
+        <span class="card-tag">01 / SOFTWARE</span>
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#E6E6E6" stroke-width="1.4" aria-hidden="true">
+          <path d="M4 7l5 5-5 5M12 18h8"/>
+        </svg>
+      </div>
+      <div>
+        <h2>Software</h2>
+        <p>Tools, CLI y tu asistente de IA local.</p>
+      </div>
+      <a href="#software" class="card-link"><span>VER SOFTWARE</span><span aria-hidden="true">→</span></a>
+    </article>
+
+    <article id="wearing" class="card">
+      <div class="card-top">
+        <span class="card-tag">02 / WEARING</span>
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#E6E6E6" stroke-width="1.4" aria-hidden="true">
+          <path d="M12 7.5a2.2 2.2 0 1 0-2.2-2.2M12 7.5V10M12 10L3 17.5h18z"/>
+        </svg>
+      </div>
+      <div>
+        <h2>Wearing / Ropa</h2>
+        <p>Hoodies, remeras, gorras y parches.</p>
+      </div>
+      <a href="#wearing" class="card-link"><span>VER ROPA</span><span aria-hidden="true">→</span></a>
+    </article>
+
+    <article id="impresiones" class="card">
+      <div class="card-top">
+        <span class="card-tag">03 / 3D</span>
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#E6E6E6" stroke-width="1.4" aria-hidden="true">
+          <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9"/>
+        </svg>
+      </div>
+      <div>
+        <h2>3D Impresiones</h2>
+        <p>Objetos y piezas impresas en 3D.</p>
+      </div>
+      <a href="#impresiones" class="card-link"><span>VER IMPRESIONES</span><span aria-hidden="true">→</span></a>
+    </article>
+
+  </section>
+  -->
+
+  <footer>
+    <span class="footer-loc">BUENOS AIRES, ARG — 34.6037° S 58.3816° W</span>
+    <span class="footer-prompt">lain &gt; <span class="cursor"></span></span>
+  </footer>
+</div>
+
+<dialog id="cart-dialog" class="cart-dialog" aria-labelledby="cart-title">
+  <div id="cart-content"></div>
+</dialog>
+<script type="module" src="catalog.js"></script>
+</body>
+</html>

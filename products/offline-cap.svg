@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 750">
+  <defs>
+    <linearGradient id="bg" x2="0" y2="1"><stop stop-color="#d5d3cd"/><stop offset="1" stop-color="#aaa9a3"/></linearGradient>
+    <linearGradient id="fabric" x2=".8" y2="1"><stop stop-color="#272929"/><stop offset=".6" stop-color="#171919"/><stop offset="1" stop-color="#343634"/></linearGradient>
+    <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency=".8" numOctaves="2"/><feColorMatrix values=".35 0 0 0 .3 .35 0 0 0 .3 .35 0 0 0 .3 0 0 0 .07 0"/></filter>
+  </defs>
+  <rect width="600" height="750" fill="url(#bg)"/>
+  <ellipse cx="305" cy="468" rx="211" ry="44" fill="#363733" opacity=".32"/>
+  <path d="M109 428q20-179 182-202 138 5 190 182l-183 69z" fill="url(#fabric)" stroke="#565954" stroke-width="4"/>
+  <path d="M291 229q-15 115 7 247m-7-246q-105 11-147 148m147-148q92 9 143 133" fill="none" stroke="#4e514d" stroke-width="3"/>
+  <path d="M100 426q106 53 203 47 120-7 199-57 24 32-1 53-88 73-210 75-117 1-195-63-18-17 4-55z" fill="#353836" stroke="#74766f" stroke-width="3"/>
+  <path d="M292 355h30v3h-30zm0 8h17v2h-17z" fill="#a7b77d"/>
+  <path d="M249 525q54 14 102-1" fill="none" stroke="#777970" stroke-width="3"/>
+  <rect width="600" height="750" filter="url(#grain)" opacity=".16"/>
+</svg>

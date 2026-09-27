@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 750">
+  <defs>
+    <linearGradient id="bg" x2="0" y2="1"><stop stop-color="#c9c9c5"/><stop offset="1" stop-color="#a6a7a3"/></linearGradient>
+    <linearGradient id="fabric" x2=".9" y2="1"><stop stop-color="#777a78"/><stop offset=".48" stop-color="#555957"/><stop offset="1" stop-color="#3f4342"/></linearGradient>
+    <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency=".75" numOctaves="2"/><feColorMatrix values=".35 0 0 0 .3 .35 0 0 0 .3 .35 0 0 0 .3 0 0 0 .07 0"/></filter>
+  </defs>
+  <rect width="600" height="750" fill="url(#bg)"/>
+  <path d="M237 163q0-78 63-78t63 78l79 25 74 88-66 74-42-34 12 251H180l12-251-42 34-66-74 74-88z" fill="url(#fabric)" stroke="#999c98" stroke-width="3"/>
+  <path d="M237 163q21 24 63 24t63-24q-5 78-63 82t-63-82" fill="#454947" stroke="#8e918e" stroke-width="3"/>
+  <path d="M280 192v60m40-60v60" stroke="#c3c3bc" stroke-width="2"/>
+  <path d="M229 396q71 35 142 0l-8 77q-63 21-126 0z" fill="#4b4f4d" stroke="#858986" stroke-width="2"/>
+  <path d="M271 318h58v4h-58z" fill="#bcc69f" opacity=".75"/>
+  <path d="M191 567h218" stroke="#9b9d98" stroke-width="2" opacity=".55"/>
+  <rect width="600" height="750" filter="url(#grain)" opacity=".16"/>
+</svg>

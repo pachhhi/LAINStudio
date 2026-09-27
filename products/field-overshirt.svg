@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 750">
+  <defs>
+    <linearGradient id="bg" x2="0" y2="1"><stop stop-color="#d0cec5"/><stop offset="1" stop-color="#aaa99f"/></linearGradient>
+    <linearGradient id="cloth" x2="1" y2="1"><stop stop-color="#737b5c"/><stop offset=".5" stop-color="#5d654b"/><stop offset="1" stop-color="#454c3c"/></linearGradient>
+    <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency=".8" numOctaves="2"/><feColorMatrix values=".35 0 0 0 .3 .35 0 0 0 .3 .35 0 0 0 .3 0 0 0 .07 0"/></filter>
+  </defs>
+  <rect width="600" height="750" fill="url(#bg)"/>
+  <path d="m212 139 54-28h68l54 28 86 65-50 75-50-34 11 326H215l11-326-50 34-50-75z" fill="url(#cloth)" stroke="#9da18d" stroke-width="3"/>
+  <path d="m266 111 34 67 34-67-9 89-25 26-25-26z" fill="#4b5240" stroke="#a6aa95" stroke-width="2"/>
+  <path d="M300 198v368" stroke="#343a30" stroke-width="3"/>
+  <path d="M233 280h58v90h-58zm76 0h58v90h-58z" fill="#535b44" stroke="#999e88" stroke-width="2"/>
+  <path d="M245 295h34m-34 7h34m-34 7h24m52-14h34m-34 7h34m-34 7h24" stroke="#929982" stroke-width="2"/>
+  <circle cx="300" cy="285" r="3" fill="#c6c4b4"/><circle cx="300" cy="355" r="3" fill="#c6c4b4"/><circle cx="300" cy="425" r="3" fill="#c6c4b4"/>
+  <rect width="600" height="750" filter="url(#grain)" opacity=".17"/>
+</svg>
