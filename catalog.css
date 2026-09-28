@@ -2,6 +2,9 @@
   padding: 62px 0 88px;
   scroll-margin-top: 24px;
 }
+.language-selector { display:flex; align-items:center; gap:2px; margin-left:4px; }
+.language-selector button { padding:6px 4px; border:0; background:transparent; color:var(--muted-2); cursor:pointer; font:500 11px 'Space Grotesk',sans-serif; letter-spacing:.12em; }
+.language-selector button[aria-pressed="true"] { color:var(--accent); }
 .catalog-heading {
   display: flex;
   justify-content: space-between;
@@ -114,6 +117,11 @@
   object-fit: cover;
   transition: opacity .28s ease, transform .45s ease;
 }
+.product-image-frame img.product-image-fit { object-fit: cover; }
+.product-image-switcher { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 4px; opacity: 0; transition: opacity .2s ease; }
+.product-image-frame:hover .product-image-switcher, .product-image-switcher:focus-within { opacity: 1; }
+.product-image-switcher button { padding: 6px 7px; border: 1px solid rgba(230,230,230,.45); background: rgba(12,11,11,.78); color: var(--text); cursor: pointer; font: 10px 'Space Grotesk', sans-serif; letter-spacing: .1em; }
+.product-image-switcher button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .product-image-secondary { opacity: 0; }
 .product-link:hover .product-image-primary { transform: scale(1.025); }
 .product-link:hover .product-image-secondary { opacity: 1; }
@@ -152,6 +160,10 @@
 .detail-availability.is-unavailable { color: var(--muted); }
 .variant-group { margin: 0 0 22px; padding: 0; border: 0; }
 .variant-group legend { margin-bottom: 10px; color: var(--muted); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
+.size-guide-link { margin: -8px 0 18px; padding: 0; border: 0; background: transparent; color: var(--muted); cursor: pointer; font: 11px 'Space Grotesk', sans-serif; letter-spacing: .1em; text-decoration: underline; text-underline-offset: 3px; }
+.size-guide-link:hover { color: var(--accent); }
+.size-guide-note, .variant-error { margin: -8px 0 18px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.variant-error { color: var(--accent); }
 .size-options, .color-options { display: flex; flex-wrap: wrap; gap: 7px; }
 .size-option {
   min-width: 42px;
@@ -239,6 +251,7 @@
   .product-meta { flex-direction: column; gap: 5px; }
   .product-title { font-size: 13px; }
   .product-price { font-size: 13px; }
+  .product-image-switcher { opacity: 1; }
   .detail-layout { grid-template-columns: 1fr; gap: 26px; }
   .detail-info { position: static; padding-top: 0; }
   .detail-name { font-size: 25px; }

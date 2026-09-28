@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -114,7 +114,7 @@
     grid-column:3;grid-row:2;display:flex;align-items:center;gap:14px;min-width:0;
   }
   .identity-diagram__expression .identity-diagram__line{background:var(--accent);opacity:.48;margin-left:-33px;margin-right:-6px;}
-  .identity-transition__connected{text-align:left;color:var(--text);font-size:14px;}
+  .identity-transition__connected{text-align:left;color:var(--muted-2);font-size:14px;}
   .identity-transition__metadata{
     display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;
     width:100%;margin:40px 0 0;font-size:13px;line-height:1.6;
@@ -219,6 +219,10 @@
       <a href="#store">STORE</a>
       <a href="#studio">STUDIO</a>
       <a href="#about">ABOUT</a>
+      <div class="language-selector" role="group" aria-label="Language">
+        <button type="button" data-language="en" aria-pressed="true">EN</button>
+        <button type="button" data-language="es" aria-pressed="false">ES</button>
+      </div>
     </nav>
   </header>
 
@@ -241,7 +245,7 @@
       <span class="identity-transition__index">001</span>
     </div>
     <p class="identity-transition__statement">A space for identity, connection and expression.</p>
-    <div class="identity-diagram" aria-label="Identity, connection, and creation meet at LAIN and extend to expression">
+    <!-- <div class="identity-diagram" aria-label="Identity, connection, and creation meet at LAIN and extend to expression">
       <div class="identity-diagram__branch" style="grid-column:1;grid-row:1">
         <span class="identity-diagram__label">IDENTITY</span><span class="identity-diagram__line" aria-hidden="true"></span>
       </div>
@@ -255,10 +259,11 @@
       <div class="identity-diagram__expression" aria-hidden="true">
         <span class="identity-diagram__line"></span><span class="identity-diagram__label">EXPRESSION</span>
       </div>
-    </div>
+    </div> -->
     <div class="identity-transition__connected">WE ARE ALL CONNECTED.</div>
     <div class="identity-transition__metadata">
-      <span>BUENOS AIRES / ARGENTINA</span><span>2026</span>
+      <span>BUENOS AIRES / ARGENTINA</span>
+      <!-- <span>2026</span> -->
       <span>34°36′S 58°22′W</span><span>LAIN STUDIO</span>
     </div>
   </section>

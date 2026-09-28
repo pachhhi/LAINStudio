@@ -1,21 +1,28 @@
 import { products, categories } from './products.js';
+import { formatPrice } from './commerce.js';
+import { resolveLanguage, setLanguage, translate } from './i18n.js';
 
 const catalogRoot = document.querySelector('#catalog-content');
 const cartDialog = document.querySelector('#cart-dialog');
 const cartRoot = document.querySelector('#cart-content');
-const currencyFormatters = new Map();
 const cartStorageKey = 'lain-store-cart-v1';
+let language = setLanguage(resolveLanguage());
 let selectedCategory = 'ALL';
 let selectedSort = 'featured';
 let cart = readCart();
 
-function money(price, currency) {
-  if (!currencyFormatters.has(currency)) {
-    currencyFormatters.set(currency, new Intl.NumberFormat('es-AR', {
-      style: 'currency', currency, maximumFractionDigits: 0
-    }));
-  }
-  return currencyFormatters.get(currency).format(price);
+function t(key) { return translate(language, key); }
+function money(price, currency) { return formatPrice(price, currency, 'es-AR', t('priceTba')); }
+
+function productImages(product) {
+  return Array.isArray(product.images)
+    ? product.images
+    : Object.values(product.images || {}).filter(Boolean);
+}
+
+function productVariants(product) {
+  if (product.variants?.length) return product.variants.filter(variant => variant.available !== false);
+  return (product.sizes || []).map(size => ({ id: size, size, available: true }));
 }
 
 function escapeHtml(value) {
@@ -56,22 +63,22 @@ function renderCatalog() {
     <div class="catalog-heading">
       <div>
         <span class="catalog-kicker">LAIN / WEARING</span>
-        <h2>Current collection</h2>
-        <p>Objects to wear. Made to stay with you.</p>
+        <h2>${t('collection')}</h2>
+        <p>${t('collectionDescription')}</p>
       </div>
       <div class="catalog-heading-side"><span class="catalog-count">BUENOS AIRES / 2026</span></div>
     </div>
     <div class="catalog-toolbar" aria-label="Collection controls">
       <div class="category-list" aria-label="Filter by category">${categoryControls}</div>
       <div class="toolbar-actions">
-        <label class="sort-label" for="catalog-sort">SORT</label>
+        <label class="sort-label" for="catalog-sort">${t('sort')}</label>
         <select class="sort-select" id="catalog-sort">
-          <option value="featured" ${selectedSort === 'featured' ? 'selected' : ''}>Featured</option>
-          <option value="newest" ${selectedSort === 'newest' ? 'selected' : ''}>Newest</option>
-          <option value="price-asc" ${selectedSort === 'price-asc' ? 'selected' : ''}>Price: Low to High</option>
-          <option value="price-desc" ${selectedSort === 'price-desc' ? 'selected' : ''}>Price: High to Low</option>
+          <option value="featured" ${selectedSort === 'featured' ? 'selected' : ''}>${t('featured')}</option>
+          <option value="newest" ${selectedSort === 'newest' ? 'selected' : ''}>${t('newest')}</option>
+          <option value="price-asc" ${selectedSort === 'price-asc' ? 'selected' : ''}>${t('priceLowHigh')}</option>
+          <option value="price-desc" ${selectedSort === 'price-desc' ? 'selected' : ''}>${t('priceHighLow')}</option>
         </select>
-        <button class="cart-trigger" type="button" data-open-cart aria-label="Open cart, ${cart.reduce((total, item) => total + item.quantity, 0)} items">CART <span id="cart-count">${cart.reduce((total, item) => total + item.quantity, 0)}</span></button>
+        <button class="cart-trigger" type="button" data-open-cart aria-label="${t('cart')}, ${cart.reduce((total, item) => total + item.quantity, 0)} items">${t('cart')} <span id="cart-count">${cart.reduce((total, item) => total + item.quantity, 0)}</span></button>
       </div>
     </div>
     <div id="product-results"></div>
@@ -92,16 +99,17 @@ function renderProducts() {
   const results = document.querySelector('#product-results');
   const matching = sortProducts(products.filter(product => selectedCategory === 'ALL' || product.category === selectedCategory));
   if (!matching.length) {
-    results.innerHTML = '<div class="empty-products"><h3>Nothing in this frequency.</h3><p>Try another category to find your next piece.</p></div>';
+    results.innerHTML = `<div class="empty-products"><h3>${t('nothing')}</h3><p>${t('tryAnotherCategory')}</p></div>`;
     return;
   }
   results.innerHTML = `<div class="product-grid">${matching.map(product => `
     <article class="product-card">
       <a class="product-link" href="#collection/${encodeURIComponent(product.slug)}" aria-label="View ${escapeHtml(product.name)}">
         <div class="product-image-frame">
-          <img class="product-image-primary" src="${escapeHtml(product.images[0])}" alt="${escapeHtml(product.name)}" loading="lazy">
-          ${product.images[1] ? `<img class="product-image-secondary" src="${escapeHtml(product.images[1])}" alt="" loading="lazy">` : ''}
-          ${product.available === false ? '<span class="availability-tag">Unavailable</span>' : ''}
+          <img class="product-image-primary${Array.isArray(product.images) ? '' : ' product-image-fit'}" src="${escapeHtml(productImages(product)[0])}" alt="${escapeHtml(product.name)}" loading="lazy">
+          ${productImages(product)[1] ? `<img class="product-image-secondary${Array.isArray(product.images) ? '' : ' product-image-fit'}" src="${escapeHtml(productImages(product)[1])}" alt="" loading="lazy">` : ''}
+          ${productImages(product).length > 1 ? `<div class="product-image-switcher" role="group" aria-label="Choose product image"><button type="button" data-image-choice="0" aria-label="Show front" aria-pressed="true">FRONT</button><button type="button" data-image-choice="1" aria-label="Show back" aria-pressed="false">BACK</button></div>` : ''}
+          ${product.available === false ? `<span class="availability-tag">${t('unavailable')}</span>` : ''}
         </div>
         <div class="product-meta">
           <div><h3 class="product-title">${escapeHtml(product.name)}</h3><span class="product-category">${escapeHtml(product.category)}</span></div>
@@ -110,6 +118,15 @@ function renderProducts() {
       </a>
     </article>
   `).join('')}</div>`;
+  results.querySelectorAll('[data-image-choice]').forEach(button => button.addEventListener('click', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    const frame = button.closest('.product-image-frame');
+    const index = Number(button.dataset.imageChoice);
+    frame.querySelector('.product-image-primary').style.opacity = index === 0 ? '1' : '0';
+    frame.querySelector('.product-image-secondary').style.opacity = index === 1 ? '1' : '0';
+    frame.querySelectorAll('[data-image-choice]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+  }));
 }
 
 function renderNotFound() {
@@ -120,8 +137,10 @@ function renderNotFound() {
 }
 
 function renderProduct(product) {
+  const images = productImages(product);
+  const variants = productVariants(product);
   let selectedImage = 0;
-  let selectedSize = product.sizes[0] || '';
+  let selectedVariantId = '';
   let selectedColor = product.colors?.[0] || '';
   let quantity = 1;
 
@@ -129,9 +148,9 @@ function renderProduct(product) {
     <a class="detail-back" href="#store">← BACK TO COLLECTION</a>
     <div class="detail-layout">
       <div class="product-gallery">
-        <div class="gallery-main"><img id="gallery-main-image" src="${escapeHtml(product.images[0])}" alt="${escapeHtml(product.name)}"></div>
-        ${product.images.length > 1 ? `<div class="gallery-thumbnails" aria-label="Product images">${product.images.map((image, index) => `
-          <button class="gallery-thumb" type="button" data-image-index="${index}" aria-label="Show image ${index + 1} of ${product.images.length}" aria-pressed="${index === 0}"><img src="${escapeHtml(image)}" alt=""></button>
+        <div class="gallery-main"><img id="gallery-main-image" src="${escapeHtml(images[0])}" alt="${escapeHtml(product.name)}"></div>
+        ${images.length > 1 ? `<div class="gallery-thumbnails" aria-label="Product images">${images.map((image, index) => `
+          <button class="gallery-thumb" type="button" data-image-index="${index}" aria-label="Show image ${index + 1} of ${images.length}" aria-pressed="${index === 0}"><img src="${escapeHtml(image)}" alt=""></button>
         `).join('')}</div>` : ''}
       </div>
       <div class="detail-info">
@@ -139,27 +158,31 @@ function renderProduct(product) {
         <h2 class="detail-name">${escapeHtml(product.name)}</h2>
         <p class="detail-price">${money(product.price, product.currency)}</p>
         <p class="detail-description">${escapeHtml(product.description)}</p>
-        <span class="detail-availability ${product.available === false ? 'is-unavailable' : ''}">${product.available === false ? 'Unavailable' : 'Available'}</span>
+        <span class="detail-availability ${product.available === false ? 'is-unavailable' : ''}">${product.available === false ? t('unavailable') : t('madeToOrder')}</span>
         ${product.colors?.length ? `<fieldset class="variant-group"><legend>Color / <span id="selected-color">${escapeHtml(selectedColor)}</span></legend><div class="color-options">${product.colors.map((color, index) => `
           <button class="color-option" type="button" data-color-index="${index}" aria-pressed="${index === 0}">${escapeHtml(color)}</button>
         `).join('')}</div></fieldset>` : ''}
-        <fieldset class="variant-group"><legend>Size / <span id="selected-size">${escapeHtml(selectedSize)}</span></legend><div class="size-options">${product.sizes.map((size, index) => `
-          <button class="size-option" type="button" data-size-index="${index}" aria-pressed="${index === 0}">${escapeHtml(size)}</button>
-        `).join('')}</div></fieldset>
-        <div class="quantity-row"><span class="quantity-label">Quantity</span><div class="quantity-control"><button class="quantity-button" type="button" data-quantity="-1" aria-label="Decrease quantity">−</button><span id="detail-quantity" class="quantity-value" aria-live="polite">1</span><button class="quantity-button" type="button" data-quantity="1" aria-label="Increase quantity">+</button></div></div>
-        <button class="add-cart-button" type="button" data-add-product ${product.available === false ? 'disabled' : ''}>${product.available === false ? 'UNAVAILABLE' : 'ADD TO CART'}</button>
+        ${variants.length ? `<fieldset class="variant-group" data-variant-group><legend>${t('size')} / <span id="selected-size">${t('selectSize')}</span></legend><div class="size-options">${variants.map((variant, index) => `
+          <button class="size-option" type="button" data-size-index="${index}" aria-pressed="false">${escapeHtml(variant.size || variant.options?.size || variant.id)}</button>
+        `).join('')}</div></fieldset>` : ''}
+        ${variants.length ? `<button class="size-guide-link" type="button" data-size-guide>${t('sizeGuide')}</button><p class="size-guide-note" id="size-guide-note" hidden>${t('sizeGuidePending')}</p>` : ''}
+        <p class="variant-error" id="variant-error" role="alert" hidden>${t('validationRequired')}</p>
+        <div class="quantity-row"><span class="quantity-label">${t('quantity')}</span><div class="quantity-control"><button class="quantity-button" type="button" data-quantity="-1" aria-label="${t('decreaseQuantity')}">−</button><span id="detail-quantity" class="quantity-value" aria-live="polite">1</span><button class="quantity-button" type="button" data-quantity="1" aria-label="${t('increaseQuantity')}">+</button></div></div>
+        <button class="add-cart-button" type="button" data-add-product ${product.available === false ? 'disabled' : ''}>${product.available === false ? t('unavailable').toUpperCase() : t('addToCart')}</button>
       </div>
     </div>
   `;
 
   catalogRoot.querySelectorAll('[data-image-index]').forEach(button => button.addEventListener('click', () => {
     selectedImage = Number(button.dataset.imageIndex);
-    catalogRoot.querySelector('#gallery-main-image').src = product.images[selectedImage];
+    catalogRoot.querySelector('#gallery-main-image').src = images[selectedImage];
     catalogRoot.querySelectorAll('[data-image-index]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
   }));
   catalogRoot.querySelectorAll('[data-size-index]').forEach(button => button.addEventListener('click', () => {
-    selectedSize = product.sizes[Number(button.dataset.sizeIndex)];
-    catalogRoot.querySelector('#selected-size').textContent = selectedSize;
+    const variant = variants[Number(button.dataset.sizeIndex)];
+    selectedVariantId = variant.id;
+    catalogRoot.querySelector('#selected-size').textContent = variant.size || variant.options?.size || variant.id;
+    catalogRoot.querySelector('#variant-error').hidden = true;
     catalogRoot.querySelectorAll('[data-size-index]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
   }));
   catalogRoot.querySelectorAll('[data-color-index]').forEach(button => button.addEventListener('click', () => {
@@ -171,16 +194,24 @@ function renderProduct(product) {
     quantity = Math.max(1, Math.min(10, quantity + Number(button.dataset.quantity)));
     catalogRoot.querySelector('#detail-quantity').textContent = String(quantity);
   }));
+  catalogRoot.querySelector('[data-size-guide]')?.addEventListener('click', () => {
+    const note = catalogRoot.querySelector('#size-guide-note');
+    note.hidden = !note.hidden;
+  });
   catalogRoot.querySelector('[data-add-product]').addEventListener('click', () => {
-    addToCart(product, selectedSize, selectedColor, quantity);
+    if (variants.length && !selectedVariantId) {
+      catalogRoot.querySelector('#variant-error').hidden = false;
+      return;
+    }
+    addToCart(product, selectedVariantId, selectedColor, quantity);
     openCart();
   });
 }
 
-function addToCart(product, size, color, quantity) {
-  const existing = cart.find(item => item.productId === product.id && item.size === size && item.color === color);
+function addToCart(product, variantId, color, quantity) {
+  const existing = cart.find(item => item.productId === product.id && (item.variantId || item.size) === variantId && item.color === color);
   if (existing) existing.quantity = Math.min(10, existing.quantity + quantity);
-  else cart.push({ productId: product.id, size, color, quantity });
+  else cart.push({ productId: product.id, variantId, color, quantity });
   saveCart();
 }
 
@@ -210,9 +241,9 @@ function renderCart() {
     <div class="cart-topline"><h2 class="cart-heading" id="cart-title">YOUR CART <span class="catalog-count">(${cart.reduce((total, item) => total + item.quantity, 0)})</span></h2><button class="text-button" type="button" data-close-cart aria-label="Close cart">CLOSE ×</button></div>
     <div class="cart-items">${cart.map((item, index) => {
       const product = products.find(candidate => candidate.id === item.productId);
-      const variant = [item.size, item.color].filter(Boolean).join(' / ');
+      const variant = [item.variantId || item.size, item.color].filter(Boolean).join(' / ');
       return `<article class="cart-item">
-        <img src="${escapeHtml(product.images[0])}" alt="${escapeHtml(product.name)}">
+        <img src="${escapeHtml(productImages(product)[0])}" alt="${escapeHtml(product.name)}">
         <div><h3 class="cart-item-name">${escapeHtml(product.name)}</h3><p class="cart-item-options">${escapeHtml(variant)}</p>
           <div class="cart-item-bottom"><div class="cart-quantity"><button class="quantity-button" type="button" data-cart-index="${index}" data-cart-change="-1" aria-label="Decrease ${escapeHtml(product.name)} quantity">−</button><span class="quantity-value">${item.quantity}</span><button class="quantity-button" type="button" data-cart-index="${index}" data-cart-change="1" aria-label="Increase ${escapeHtml(product.name)} quantity">+</button></div><span>${money(product.price * item.quantity, product.currency)}</span></div>
           <button class="cart-remove" type="button" data-remove-index="${index}">Remove</button>
@@ -272,6 +303,15 @@ catalogRoot.addEventListener('change', event => {
 window.addEventListener('hashchange', renderRoute);
 cartDialog.addEventListener('click', event => {
   if (event.target === cartDialog) cartDialog.close();
+});
+
+document.querySelectorAll('[data-language]').forEach(button => {
+  button.setAttribute('aria-pressed', String(button.dataset.language === language));
+  button.addEventListener('click', () => {
+    language = setLanguage(button.dataset.language);
+    document.querySelectorAll('[data-language]').forEach(item => item.setAttribute('aria-pressed', String(item.dataset.language === language)));
+    renderRoute();
+  });
 });
 
 renderRoute();

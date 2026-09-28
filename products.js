@@ -1,21 +1,54 @@
-/** @typedef {{ id: string, slug: string, name: string, description: string, price: number, currency: string, category: string, images: string[], sizes: string[], colors?: string[], featured?: boolean, available?: boolean, createdAt: string }} Product */
+/** @typedef {{ id: string, slug: string, name: string, description: string, price: number|null, currency: string, category: string, images: string[]|{front?: string, back?: string, detail?: string, lifestyle?: string}, sizes: string[], variants?: { id: string, size?: string, available?: boolean, options?: object }[], colors?: string[], featured?: boolean, available?: boolean, createdAt: string }} Product */
 
 /** @type {Product[]} */
 export const products = [
   {
+    id: 'lain-tee-02',
+    slug: 'lain-tee-02',
+    name: 'LAIN T-shirt',
+    description: 'TEMPORARY PRODUCT DESCRIPTION',
+    price: null,
+    currency: 'ARS',
+    category: 'wearing',
+    images: { front: '/img/outfit/lain-frente.png', back: '/img/outfit/lain-espalda.png' },
+    sizes: [],
+    variants: ['S', 'M', 'L', 'XL'].map(size => ({ id: size, size, available: true })),
+    colors: [],
+    featured: true,
+    available: true,
+    createdAt: '2026-09-28'
+  },
+  {
     id: 'lain-tee-01',
     slug: 'lain-tee-01',
-    name: 'Signal Tee',
-    description: 'Heavyweight cotton, relaxed fit. Finished with a small woven signal mark at the chest and a quiet graphic on the back.',
-    price: 38000,
+    name: 'PHANTOMA T-shirt',
+    description: 'TEMPORARY PRODUCT DESCRIPTION',
+    price: null,
     currency: 'ARS',
-    category: 'Tees',
-    images: ['/products/signal-tee.svg', '/products/signal-tee-back.svg'],
-    sizes: ['XS', 'S', 'M', 'L', 'XL'],
-    colors: ['Black', 'Ash'],
+    category: 'wearing',
+    images: { front: '/img/outfit/phantoma1.png', back: '/img/outfit/phantoma.png' },
+    sizes: [],
+    variants: ['S', 'M', 'L', 'XL'].map(size => ({ id: size, size, available: true })),
+    colors: [],
     featured: true,
     available: true,
     createdAt: '2026-09-15'
+  },
+  {
+    id: 'lain-tee-03',
+    slug: 'lain-tee-03',
+    name: 'LAIN WIRED T-shirt',
+    description: 'TEMPORARY PRODUCT DESCRIPTION',
+    price: null,
+    currency: 'ARS',
+    category: 'wearing',
+    images: { front: '/img/outfit/lain-wired-frente.png', back: '/img/outfit/lain-wired-espalda.png' },
+    sizes: [],
+    variants: ['S', 'M', 'L', 'XL'].map(size => ({ id: size, size, available: true })),
+    colors: [],
+    featured: true,
+    available: true,
+    createdAt: '2026-09-28'
   },
   {
     id: 'lain-hoodie-01',
