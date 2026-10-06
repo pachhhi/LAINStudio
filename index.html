@@ -3,8 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LAIN STUDIO</title>
+<meta name="description" content="LAIN Studio — clothing, visual identity and digital work from Buenos Aires.">
+<meta property="og:type" content="website"><meta property="og:title" content="LAIN STUDIO"><meta property="og:description" content="Clothing, visual identity and digital work from Buenos Aires."><meta property="og:image" content="/img/lain-icon.png">
+<meta name="theme-color" content="#0C0B0B">
+<title>LAIN STUDIO — Clothing &amp; Digital Work</title>
+<link rel="icon" href="/img/lain-icon.png" type="image/png">
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
 <link rel="stylesheet" href="catalog.css">
 <style>
   :root{
@@ -24,26 +29,6 @@
   a:hover{color:var(--accent);}
   .wrap{max-width:1440px;margin:0 auto;padding:0 64px;}
 
-  header{
-    height:88px;display:flex;align-items:center;justify-content:space-between;
-    border-bottom:0px solid var(--border-soft);
-  }
-  .logo{display:flex;align-items:center;gap:18px;}
-  .logo-icon{display:block;height:43px;width:auto;}
-  .logo span{
-    font-family:'Montserrat',sans-serif;font-weight:500;font-size:26px;
-    letter-spacing:0.42em;color:var(--text);
-  }
-  .logo-suffix{
-    font-size:15px;font-weight:400;letter-spacing:0.32em;color:var(--muted);
-  }
-  nav{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
-  nav a{
-    height:44px;padding:0 22px;display:flex;align-items:center;
-    border-radius:2px;font-size:13px;
-    font-weight:500;letter-spacing:0.18em;
-  }
-
   .hero{
     position:relative;isolation:isolate;
     min-height:500px;padding:64px 0;display:flex;align-items:center;
@@ -52,7 +37,7 @@
   .hero::before{
     content:"";position:absolute;z-index:-1;top:0;bottom:0;left:50%;
     width:100vw;transform:translateX(-50%);
-    background:url('img/lain-bg-skyline-header.png') center center / cover no-repeat;
+    background:url('img/lain-bg-skyline-header.webp') center center / cover no-repeat;
   }
   .hero-copy{max-width:640px;display:flex;flex-direction:column;gap:28px;}
   .eyebrow{font-size:13px;font-weight:500;letter-spacing:0.3em;color:var(--accent);}
@@ -127,28 +112,27 @@
     .hero-logo{display:none;}
   }
 
-  .sections{
-    padding:0 0 64px 0;display:flex;gap:24px;flex-wrap:wrap;
+  .home-services{display:grid;gap:34px;padding:0 0 88px;}
+  .home-services .service{display:grid;grid-template-columns:minmax(0,1fr) 270px;column-gap:clamp(40px,8vw,120px);row-gap:24px;padding:0;}
+  #store + #studio-services{padding-top:34px;}
+  .home-services .service__copy h2{margin:0 0 18px;font-family:'Montserrat',sans-serif;font-size:24px;font-weight:500;line-height:1.2;}
+  .home-services .service__copy p{max-width:500px;margin:0;color:var(--muted);font-size:15px;line-height:1.55;}
+  .home-services .service__metadata{display:grid;align-content:start;gap:10px;margin:4px 0 0;}
+  .home-services .service__metadata div{display:grid;grid-template-columns:78px minmax(0,1fr);gap:16px;}
+  .home-services .service__metadata dt,.home-services .service__metadata dd{margin:0;font-size:11px;font-weight:500;letter-spacing:.12em;line-height:1.35;}
+  .home-services .service__metadata dt{color:var(--muted-2);}
+  .home-services .service__metadata dd{color:var(--text);text-align:right;}
+  .home-services .service__metadata .service__status{color:var(--accent);}
+  .home-services .service__capabilities{display:flex;grid-column:1 / -1;flex-wrap:wrap;gap:8px;margin:0;padding:0;list-style:none;}
+  .home-services .service__capabilities li{border:1px solid var(--accent);padding:7px 9px 6px;color:var(--accent);font-size:10px;font-weight:500;letter-spacing:.1em;line-height:1;}
+  .mobile-menu-toggle{display:none;}
+  .mobile-menu-icon{display:grid;width:18px;gap:4px;}
+  .mobile-menu-icon span{display:block;width:100%;height:1px;background:var(--accent);}
+
+  @media (min-width:961px){
+    .catalog.section-header-section{padding-bottom:60px;}
+    #store + #studio-services{padding-top:62px;}
   }
-  .card{
-    flex:1 1 300px;min-height:300px;padding:28px;background:var(--panel);
-    border:1px solid var(--border);border-radius:2px;display:flex;
-    flex-direction:column;justify-content:space-between;gap:20px;
-  }
-  .card-top{display:flex;justify-content:space-between;align-items:flex-start;}
-  .card-tag{font-size:12px;font-weight:500;letter-spacing:0.28em;color:var(--accent);}
-  .card h2{
-    margin:0;font-family:'Montserrat',sans-serif;font-weight:500;
-    font-size:30px;letter-spacing:0.06em;
-  }
-  .card p{margin:8px 0 0 0;font-size:16px;line-height:1.5;color:var(--muted);}
-  .card-link{
-    height:46px;padding:0 22px;display:flex;align-items:center;
-    justify-content:space-between;border:1px solid var(--accent);
-    border-radius:2px;font-size:13px;font-weight:600;letter-spacing:0.2em;
-    color:var(--accent);
-  }
-  .card-link:hover{color:var(--accent);background:rgba(107,175,53,0.08);}
 
   footer{
     height:72px;display:flex;align-items:center;justify-content:space-between;
@@ -157,15 +141,8 @@
   .footer-loc{font-size:12px;letter-spacing:0.2em;color:var(--muted-2);}
   .footer-prompt{font-size:14px;color:var(--text);display:flex;align-items:center;gap:6px;}
   .cursor{display:inline-block;width:8px;height:14px;background:var(--accent);}
-
   @media (max-width:960px){
     .wrap{padding:0 24px;}
-    header{height:auto;flex-direction:column;align-items:center;gap:14px;padding:16px 24px;}
-    .logo{gap:12px;min-width:0;}
-    .logo>span{font-size:22px;letter-spacing:0.24em;white-space:nowrap;}
-    .logo-suffix{font-size:12px;letter-spacing:0.16em;}
-    nav{width:100%;justify-content:center;gap:8px;flex-wrap:nowrap;}
-    nav a{flex:0 0 auto;padding:0 10px;white-space:nowrap;}
     h1{font-size:clamp(30px,4.2vw,40px);}
     .hero{padding:40px 0;}
     .hero-copy{width:100%;max-width:640px;gap:22px;}
@@ -187,38 +164,38 @@
     .identity-transition__metadata{margin-top:32px;column-gap:14px;font-size:11px;letter-spacing:0.12em;}
   }
   @media (max-width:760px){
+    .site-header{position:relative;z-index:20;height:72px;padding:0;justify-content:center;}
+    .site-header .logo{position:absolute;left:50%;transform:translateX(-50%);}
+    .mobile-menu-toggle{position:absolute;right:0;display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;padding:0;border:1px solid var(--border);border-radius:2px;background:transparent;color:var(--text);font:500 10px 'Space Grotesk',sans-serif;letter-spacing:.16em;cursor:pointer;}
+    .site-header > nav{display:none;position:absolute;z-index:10;top:64px;right:0;width:min(240px,calc(100vw - 48px));padding:8px;background:var(--panel);border:1px solid var(--border);border-radius:2px;align-items:stretch;gap:0;}
+    .site-header > nav[data-menu-open]{display:flex;}
+    .site-header > nav a{height:44px;padding:0 14px;justify-content:center;}
+    .site-header .language-selector{height:44px;justify-content:center;margin:0;padding:0;}
+    .site-header .language-selector button{min-width:44px;height:44px;padding:0 14px;}
     .identity-transition{padding-bottom:0;}
+    #store + #studio-services{padding-top:24px;}
+    .home-services{gap:24px;padding-bottom:60px;}
+    .home-services .service{grid-template-columns:1fr;}
+    .home-services .service__metadata{margin-top:0;}
   }
   @media (max-width:400px){
     .identity-transition__statement{font-size:30px;}
-    .logo{gap:8px;}
-    .logo-icon{height:34px;}
-    .logo>span{font-size:18px;letter-spacing:0.14em;}
-    .logo-suffix{font-size:10px;letter-spacing:0.08em;}
-    nav{gap:4px;}
-    nav a{padding:0 7px;}
     .hero-copy{gap:18px;}
-  }
-  @media (max-width:340px){
-    .logo{gap:6px;}
-    .logo-icon{height:30px;}
-    .logo>span{font-size:15px;letter-spacing:0.08em;}
-    .logo-suffix{font-size:8px;letter-spacing:0.05em;}
   }
 </style>
 </head>
 <body>
 
 <div class="wrap">
-  <header>
-    <a href="#" class="logo" aria-label="LAIN Studio inicio">
+  <header class="site-header">
+    <a href="/" class="logo" data-i18n-aria-label="home" aria-label="LAIN Studio home">
       <img src="img/lain-icon.png" alt="" width="52" height="43" class="logo-icon">
       <span>LAIN <span class="logo-suffix">STUDIO</span></span>
     </a>
-    <nav>
-      <a href="#store">STORE</a>
-      <a href="#studio">STUDIO</a>
-      <a href="#about">ABOUT</a>
+    <button class="mobile-menu-toggle" type="button" aria-label="Open navigation menu" aria-expanded="false" aria-controls="main-navigation"><span class="mobile-menu-icon" aria-hidden="true"><span></span><span></span><span></span></span></button>
+    <nav id="main-navigation" aria-label="Main navigation">
+      <a href="#store" aria-current="page" data-i18n="store">STORE</a>
+      <a href="#studio-services" data-i18n="studio">STUDIO</a>
       <div class="language-selector" role="group" aria-label="Language">
         <button type="button" data-language="en" aria-pressed="true">EN</button>
         <button type="button" data-language="es" aria-pressed="false">ES</button>
@@ -228,12 +205,12 @@
 
   <section class="hero">
     <div class="hero-copy">
-      <div class="eyebrow">CLOTHING & DIGITAL WORK</div>
-      <h1>Lain isn't a product.<br>Lain is what you make.</h1>
-      <div class="tagline">We are all connected.</div>
+      <div class="eyebrow" data-i18n="clothingDigitalWork">CLOTHING & DIGITAL WORK</div>
+      <h1 data-i18n="heroTitle">Lain isn't a product. Lain is what you make.</h1>
+      <div class="tagline" data-i18n="connected">We are all connected.</div>
       <div class="cta-row">
-        <a href="#sections" class="btn-solid">EXPLORE STORE</a>
-        <a href="#about" class="btn-outline">ABOUT LAIN</a>
+        <a href="#sections" class="btn-solid" data-i18n="exploreStore">EXPLORE STORE</a>
+        <a href="#studio-services" class="btn-solid" data-i18n="exploreStudio">EXPLORE STUDIO</a>
       </div>
     </div>
     <img src="img/lain-icon.png" alt="Logo LAIN" class="hero-logo" width="420" height="345">
@@ -244,86 +221,45 @@
       <span class="identity-transition__eyebrow">LAIN / IDENTITY</span>
       <span class="identity-transition__index">001</span>
     </div>
-    <p class="identity-transition__statement">A space for identity, connection and expression.</p>
-    <!-- <div class="identity-diagram" aria-label="Identity, connection, and creation meet at LAIN and extend to expression">
-      <div class="identity-diagram__branch" style="grid-column:1;grid-row:1">
-        <span class="identity-diagram__label">IDENTITY</span><span class="identity-diagram__line" aria-hidden="true"></span>
-      </div>
-      <div class="identity-diagram__branch" style="grid-column:1;grid-row:2">
-        <span class="identity-diagram__label">CONNECTION</span><span class="identity-diagram__line" aria-hidden="true"></span>
-      </div>
-      <div class="identity-diagram__branch" style="grid-column:1;grid-row:3">
-        <span class="identity-diagram__label">CREATION</span><span class="identity-diagram__line" aria-hidden="true"></span>
-      </div>
-      <div class="identity-diagram__junction" aria-hidden="true"><img src="img/lain-icon.png" alt=""></div>
-      <div class="identity-diagram__expression" aria-hidden="true">
-        <span class="identity-diagram__line"></span><span class="identity-diagram__label">EXPRESSION</span>
-      </div>
-    </div> -->
-    <div class="identity-transition__connected">WE ARE ALL CONNECTED.</div>
+    <p class="identity-transition__statement" data-i18n="identityStatement">A space for identity, connection and expression.</p>
+    <div class="identity-transition__connected" data-i18n="connected">WE ARE ALL CONNECTED.</div>
     <div class="identity-transition__metadata">
       <span>BUENOS AIRES / ARGENTINA</span>
-      <!-- <span>2026</span> -->
       <span>34°36′S 58°22′W</span><span>LAIN STUDIO</span>
     </div>
   </section>
 
-  <section id="store" class="catalog" aria-label="LAIN clothing collection">
+  <section id="store" class="catalog section-header-section" aria-label="LAIN clothing collection">
     <span id="sections" class="catalog-anchor" aria-hidden="true"></span>
     <div id="catalog-content" aria-live="polite"></div>
   </section>
 
-  <!-- Homepage service cards are temporarily hidden; retain for a future Studio section.
-  <section id="sections" class="sections">
-
-    <article id="software" class="card">
-      <div class="card-top">
-        <span class="card-tag">01 / SOFTWARE</span>
-        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#E6E6E6" stroke-width="1.4" aria-hidden="true">
-          <path d="M4 7l5 5-5 5M12 18h8"/>
-        </svg>
-      </div>
-      <div>
-        <h2>Software</h2>
-        <p>Tools, CLI y tu asistente de IA local.</p>
-      </div>
-      <a href="#software" class="card-link"><span>VER SOFTWARE</span><span aria-hidden="true">→</span></a>
-    </article>
-
-    <article id="wearing" class="card">
-      <div class="card-top">
-        <span class="card-tag">02 / WEARING</span>
-        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#E6E6E6" stroke-width="1.4" aria-hidden="true">
-          <path d="M12 7.5a2.2 2.2 0 1 0-2.2-2.2M12 7.5V10M12 10L3 17.5h18z"/>
-        </svg>
-      </div>
-      <div>
-        <h2>Wearing / Ropa</h2>
-        <p>Hoodies, remeras, gorras y parches.</p>
-      </div>
-      <a href="#wearing" class="card-link"><span>VER ROPA</span><span aria-hidden="true">→</span></a>
-    </article>
-
-    <article id="impresiones" class="card">
-      <div class="card-top">
-        <span class="card-tag">03 / 3D</span>
-        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#E6E6E6" stroke-width="1.4" aria-hidden="true">
-          <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9"/>
-        </svg>
-      </div>
-      <div>
-        <h2>3D Impresiones</h2>
-        <p>Objetos y piezas impresas en 3D.</p>
-      </div>
-      <a href="#impresiones" class="card-link"><span>VER IMPRESIONES</span><span aria-hidden="true">→</span></a>
-    </article>
-
+  <section id="studio-services" class="section-header-section" aria-labelledby="studio-title">
+    <div class="section-header"><div><span class="section-header__eyebrow">LAIN / STUDIO</span><h2 id="studio-title" class="section-header__title" data-i18n="studioTitle">Ideas into systems. Systems into form.</h2></div></div>
+    <div class="home-services">
+      <article class="service">
+        <div class="service__content"><div class="service__copy"><h2 data-i18n="webDesign">WEB DESIGN</h2><p data-i18n="webDescription">Web design and development focused on custom digital experiences.</p><a class="service__action section-header__eyebrow" href="#contact" data-i18n="startProject">START A PROJECT ↘</a></div></div>
+        <dl class="service__metadata"><div><dt>TYPE</dt><dd>DIGITAL SERVICE</dd></div><div><dt>FOCUS</dt><dd>WEB EXPERIENCES</dd></div><div><dt>OUTPUT</dt><dd>WEB</dd></div><div><dt>STATUS</dt><dd class="service__status">AVAILABLE</dd></div></dl>
+        <ul class="service__capabilities" aria-label="Web Design capabilities"><li>CUSTOM WEBSITES</li><li>LANDING PAGES</li><li>E-COMMERCE</li><li>INTERFACES</li><li>PORTFOLIOS</li><li>WEB APPLICATIONS</li></ul>
+      </article>
+      <article class="service">
+        <div class="service__content"><div class="service__copy"><h2 data-i18n="aiArchitecture">AI ARCHITECTURE</h2><p data-i18n="aiDescription">Custom AI systems designed around real tools, data and workflows.</p><a class="service__action section-header__eyebrow" href="#contact" data-i18n="startProject">START A PROJECT ↘</a></div></div>
+        <dl class="service__metadata"><div><dt>TYPE</dt><dd>AI SYSTEMS</dd></div><div><dt>FOCUS</dt><dd>TOOLS / WORKFLOWS</dd></div><div><dt>OUTPUT</dt><dd>LOCAL / CLOUD</dd></div><div><dt>STATUS</dt><dd class="service__status">AVAILABLE</dd></div></dl>
+        <ul class="service__capabilities" aria-label="AI Architecture capabilities"><li>AI ASSISTANTS</li><li>AI AGENTS</li><li>RAG SYSTEMS</li><li>LOCAL AI</li><li>LLM INTEGRATION</li><li>TOOL INTEGRATION</li><li>AUTOMATION</li><li>CUSTOM AI SYSTEMS</li></ul>
+      </article>
+      <article class="service">
+        <div class="service__content"><div class="service__copy"><h2 data-i18n="graphicDesign">GRAPHIC DESIGN</h2><p data-i18n="graphicDescription">Visual design and digital creative work built around a clear identity.</p><a class="service__action section-header__eyebrow" href="#contact" data-i18n="startProject">START A PROJECT ↘</a></div></div>
+        <dl class="service__metadata"><div><dt>TYPE</dt><dd>VISUAL SERVICE</dd></div><div><dt>FOCUS</dt><dd>IDENTITY / COMMUNICATION</dd></div><div><dt>OUTPUT</dt><dd>DIGITAL / PRINT</dd></div><div><dt>STATUS</dt><dd class="service__status">AVAILABLE</dd></div></dl>
+        <ul class="service__capabilities" aria-label="Graphic Design capabilities"><li>POSTERS</li><li>APPAREL</li><li>DIGITAL ART</li><li>VISUAL IDENTITY</li></ul>
+      </article>
+    </div>
   </section>
-  -->
 
-  <footer>
-    <span class="footer-loc">BUENOS AIRES, ARG — 34.6037° S 58.3816° W</span>
-    <span class="footer-prompt">lain &gt; <span class="cursor"></span></span>
+  <section id="contact" class="contact section-header-section" aria-labelledby="contact-title"></section>
+
+  <footer class="site-footer">
+    <span class="footer-loc" data-i18n="copyright">© 2026 LAIN STUDIO</span>
+    <nav class="footer-links" aria-label="Legal"><a href="#contact" data-i18n="footerContact">CONTACT</a><a href="/privacy.html" data-i18n="privacy">PRIVACY</a><a href="/terms.html" data-i18n="terms">TERMS</a></nav>
   </footer>
 </div>
 
@@ -331,5 +267,27 @@
   <div id="cart-content"></div>
 </dialog>
 <script type="module" src="catalog.js"></script>
+<script type="module" src="contact.js"></script>
+<script>
+  const menuToggle = document.querySelector('.mobile-menu-toggle');
+  const mainNavigation = document.querySelector('#main-navigation');
+  if (menuToggle && mainNavigation) {
+    const closeMenu = () => {
+      menuToggle.setAttribute('aria-expanded', 'false');
+      mainNavigation.removeAttribute('data-menu-open');
+    };
+    menuToggle.addEventListener('click', () => {
+      const isOpen = menuToggle.getAttribute('aria-expanded') === 'true';
+      menuToggle.setAttribute('aria-expanded', String(!isOpen));
+      mainNavigation.toggleAttribute('data-menu-open', !isOpen);
+    });
+    mainNavigation.addEventListener('click', event => {
+      if (event.target.closest('a')) closeMenu();
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') closeMenu();
+    });
+  }
+</script>
 </body>
 </html>

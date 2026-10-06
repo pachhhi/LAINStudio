@@ -1,0 +1,25 @@
+{
+  "name": "lain-studio-store",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server/index.js",
+    "dev": "node --env-file-if-exists=.env --watch server/index.js",
+    "ops": "node --env-file-if-exists=.env ops/index.js",
+    "test": "node --test",
+    "test:enviopack-live": "node --env-file=.env scripts/enviopack-live.js",
+    "test:coverage": "c8 --reporter=text node --test",
+    "db:migrate": "node --env-file-if-exists=.env server/db/migrate.js up",
+    "db:rollback": "node --env-file-if-exists=.env server/db/migrate.js down",
+    "test:postgres": "node --test test/postgres-order-repository.test.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "c8": "^12.0.0",
+    "supertest": "^7.3.1"
+  }
+}

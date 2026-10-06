@@ -1,15 +1,17 @@
 import { products, categories } from './products.js';
 import { formatPrice } from './commerce.js';
-import { resolveLanguage, setLanguage, translate } from './i18n.js';
+import { translate } from './i18n.js';
+import { initLanguageSelector } from './language-selector.js';
+import { CartStore } from './cart-store.js';
+import { CartService } from './cart-service.js';
 
 const catalogRoot = document.querySelector('#catalog-content');
 const cartDialog = document.querySelector('#cart-dialog');
 const cartRoot = document.querySelector('#cart-content');
-const cartStorageKey = 'lain-store-cart-v1';
-let language = setLanguage(resolveLanguage());
+let language;
 let selectedCategory = 'ALL';
 let selectedSort = 'featured';
-let cart = readCart();
+const cartService = new CartService({ catalog: products, store: new CartStore() });
 
 function t(key) { return translate(language, key); }
 function money(price, currency) { return formatPrice(price, currency, 'es-AR', t('priceTba')); }
@@ -31,27 +33,19 @@ function escapeHtml(value) {
   })[character]);
 }
 
-function readCart() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(cartStorageKey) || '[]');
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(item => products.some(product => product.id === item.productId)
-      && Number.isInteger(item.quantity) && item.quantity > 0);
-  } catch {
-    return [];
-  }
-}
+function cartItems() { return cartService.getItems(); }
 
-function saveCart() {
-  localStorage.setItem(cartStorageKey, JSON.stringify(cart));
+function cartChanged() {
   updateCartTrigger();
   if (cartDialog.open) renderCart();
 }
 
 function updateCartTrigger() {
-  const count = cart.reduce((total, item) => total + item.quantity, 0);
+  const count = cartService.getCount();
   const countNode = document.querySelector('#cart-count');
   if (countNode) countNode.textContent = String(count);
+  const trigger = document.querySelector('[data-open-cart]');
+  if (trigger) trigger.setAttribute('aria-label', `${t('cart')}, ${count} items`);
 }
 
 function renderCatalog() {
@@ -60,13 +54,13 @@ function renderCatalog() {
   `).join('');
 
   catalogRoot.innerHTML = `
-    <div class="catalog-heading">
+    <div class="section-header">
       <div>
-        <span class="catalog-kicker">LAIN / WEARING</span>
-        <h2>${t('collection')}</h2>
-        <p>${t('collectionDescription')}</p>
+        <span class="section-header__eyebrow">LAIN / WEARING</span>
+        <h2 class="section-header__title">${t('collection')}</h2>
+        <p class="section-header__description">${t('collectionDescription')}</p>
       </div>
-      <div class="catalog-heading-side"><span class="catalog-count">BUENOS AIRES / 2026</span></div>
+      <div class="section-header__aside"><span class="section-header__metadata">BUENOS AIRES / 2026</span></div>
     </div>
     <div class="catalog-toolbar" aria-label="Collection controls">
       <div class="category-list" aria-label="Filter by category">${categoryControls}</div>
@@ -78,7 +72,7 @@ function renderCatalog() {
           <option value="price-asc" ${selectedSort === 'price-asc' ? 'selected' : ''}>${t('priceLowHigh')}</option>
           <option value="price-desc" ${selectedSort === 'price-desc' ? 'selected' : ''}>${t('priceHighLow')}</option>
         </select>
-        <button class="cart-trigger" type="button" data-open-cart aria-label="${t('cart')}, ${cart.reduce((total, item) => total + item.quantity, 0)} items">${t('cart')} <span id="cart-count">${cart.reduce((total, item) => total + item.quantity, 0)}</span></button>
+        <button class="cart-trigger" type="button" data-open-cart aria-label="${t('cart')}, ${cartService.getCount()} items">${t('cart')} <span id="cart-count">${cartService.getCount()}</span></button>
       </div>
     </div>
     <div id="product-results"></div>
@@ -103,14 +97,16 @@ function renderProducts() {
     return;
   }
   results.innerHTML = `<div class="product-grid">${matching.map(product => `
-    <article class="product-card">
-      <a class="product-link" href="#collection/${encodeURIComponent(product.slug)}" aria-label="View ${escapeHtml(product.name)}">
+    <article class="product-card" data-current-side="front">
         <div class="product-image-frame">
-          <img class="product-image-primary${Array.isArray(product.images) ? '' : ' product-image-fit'}" src="${escapeHtml(productImages(product)[0])}" alt="${escapeHtml(product.name)}" loading="lazy">
-          ${productImages(product)[1] ? `<img class="product-image-secondary${Array.isArray(product.images) ? '' : ' product-image-fit'}" src="${escapeHtml(productImages(product)[1])}" alt="" loading="lazy">` : ''}
-          ${productImages(product).length > 1 ? `<div class="product-image-switcher" role="group" aria-label="Choose product image"><button type="button" data-image-choice="0" aria-label="Show front" aria-pressed="true">FRONT</button><button type="button" data-image-choice="1" aria-label="Show back" aria-pressed="false">BACK</button></div>` : ''}
+          <a class="product-link product-image-link" href="#collection/${encodeURIComponent(product.slug)}" aria-label="${t('viewProduct')} ${escapeHtml(product.name)}">
+          <img class="product-image-primary${product.imageFit === 'contain' ? ' product-image-contain' : ''}" src="${escapeHtml(productImages(product)[0])}" alt="${escapeHtml(product.name)}" loading="lazy">
+          ${productImages(product)[1] ? `<img class="product-image-secondary${product.imageFit === 'contain' ? ' product-image-contain' : ''}" data-src="${escapeHtml(productImages(product)[1])}" alt="" width="1254" height="1254">` : ''}
           ${product.available === false ? `<span class="availability-tag">${t('unavailable')}</span>` : ''}
+          </a>
+          ${productImages(product).length > 1 ? `<div class="product-image-switcher" role="group" aria-label="${t('chooseImage')}"><button type="button" data-image-choice="front" aria-label="${t('showFront')}" aria-pressed="true">${t('front')}</button><button type="button" data-image-choice="back" aria-label="${t('showBack')}" aria-pressed="false">${t('back')}</button></div>` : ''}
         </div>
+      <a class="product-link" href="#collection/${encodeURIComponent(product.slug)}" aria-label="${t('viewProduct')} ${escapeHtml(product.name)}">
         <div class="product-meta">
           <div><h3 class="product-title">${escapeHtml(product.name)}</h3><span class="product-category">${escapeHtml(product.category)}</span></div>
           <span class="product-price">${money(product.price, product.currency)}</span>
@@ -118,21 +114,21 @@ function renderProducts() {
       </a>
     </article>
   `).join('')}</div>`;
-  results.querySelectorAll('[data-image-choice]').forEach(button => button.addEventListener('click', event => {
-    event.preventDefault();
-    event.stopPropagation();
-    const frame = button.closest('.product-image-frame');
-    const index = Number(button.dataset.imageChoice);
-    frame.querySelector('.product-image-primary').style.opacity = index === 0 ? '1' : '0';
-    frame.querySelector('.product-image-secondary').style.opacity = index === 1 ? '1' : '0';
-    frame.querySelectorAll('[data-image-choice]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+  results.querySelectorAll('[data-image-choice]').forEach(button => button.addEventListener('click', () => {
+    const card = button.closest('.product-card');
+    const secondary = card.querySelector('.product-image-secondary');
+    if (button.dataset.imageChoice === 'back' && secondary?.dataset.src && !secondary.src) secondary.src = secondary.dataset.src;
+    card.dataset.currentSide = button.dataset.imageChoice;
+    card.querySelectorAll('[data-image-choice]').forEach(item => {
+      item.setAttribute('aria-pressed', String(item.dataset.imageChoice === card.dataset.currentSide));
+    });
   }));
 }
 
 function renderNotFound() {
   catalogRoot.innerHTML = `
-    <a class="detail-back" href="#store">← BACK TO COLLECTION</a>
-    <div class="empty-products"><span class="catalog-kicker">404 / NO SIGNAL</span><h3>This piece isn't here.</h3><p>The item may have moved on. The collection is still open.</p><a class="detail-back" href="#store">VIEW COLLECTION →</a></div>
+    <a class="detail-back" href="#store">${t('backToCollection')}</a>
+    <div class="empty-products"><span class="catalog-kicker">${t('noSignal')}</span><h3>${t('productNotFound')}</h3><p>${t('productMoved')}</p><a class="detail-back" href="#store">${t('viewCollection')}</a></div>
   `;
 }
 
@@ -145,10 +141,10 @@ function renderProduct(product) {
   let quantity = 1;
 
   catalogRoot.innerHTML = `
-    <a class="detail-back" href="#store">← BACK TO COLLECTION</a>
+    <a class="detail-back" href="#store">${t('backToCollection')}</a>
     <div class="detail-layout">
       <div class="product-gallery">
-        <div class="gallery-main"><img id="gallery-main-image" src="${escapeHtml(images[0])}" alt="${escapeHtml(product.name)}"></div>
+        <div class="gallery-main"><img id="gallery-main-image" class="${product.imageFit === 'contain' ? 'product-image-contain' : ''}" src="${escapeHtml(images[0])}" alt="${escapeHtml(product.name)}"></div>
         ${images.length > 1 ? `<div class="gallery-thumbnails" aria-label="Product images">${images.map((image, index) => `
           <button class="gallery-thumb" type="button" data-image-index="${index}" aria-label="Show image ${index + 1} of ${images.length}" aria-pressed="${index === 0}"><img src="${escapeHtml(image)}" alt=""></button>
         `).join('')}</div>` : ''}
@@ -157,9 +153,9 @@ function renderProduct(product) {
         <span class="detail-category">${escapeHtml(product.category)}</span>
         <h2 class="detail-name">${escapeHtml(product.name)}</h2>
         <p class="detail-price">${money(product.price, product.currency)}</p>
-        <p class="detail-description">${escapeHtml(product.description)}</p>
+        ${product.description ? `<p class="detail-description">${escapeHtml(product.description)}</p>` : ''}
         <span class="detail-availability ${product.available === false ? 'is-unavailable' : ''}">${product.available === false ? t('unavailable') : t('madeToOrder')}</span>
-        ${product.colors?.length ? `<fieldset class="variant-group"><legend>Color / <span id="selected-color">${escapeHtml(selectedColor)}</span></legend><div class="color-options">${product.colors.map((color, index) => `
+        ${product.colors?.length ? `<fieldset class="variant-group"><legend>${t('color')} / <span id="selected-color">${escapeHtml(selectedColor)}</span></legend><div class="color-options">${product.colors.map((color, index) => `
           <button class="color-option" type="button" data-color-index="${index}" aria-pressed="${index === 0}">${escapeHtml(color)}</button>
         `).join('')}</div></fieldset>` : ''}
         ${variants.length ? `<fieldset class="variant-group" data-variant-group><legend>${t('size')} / <span id="selected-size">${t('selectSize')}</span></legend><div class="size-options">${variants.map((variant, index) => `
@@ -209,57 +205,55 @@ function renderProduct(product) {
 }
 
 function addToCart(product, variantId, color, quantity) {
-  const existing = cart.find(item => item.productId === product.id && (item.variantId || item.size) === variantId && item.color === color);
-  if (existing) existing.quantity = Math.min(10, existing.quantity + quantity);
-  else cart.push({ productId: product.id, variantId, color, quantity });
-  saveCart();
+  cartService.add({ productId: product.id, variantId, color, quantity });
+  cartChanged();
 }
 
 function changeCartQuantity(index, amount) {
-  cart[index].quantity += amount;
-  if (cart[index].quantity < 1) cart.splice(index, 1);
-  else cart[index].quantity = Math.min(10, cart[index].quantity);
-  saveCart();
+  cartService.changeQuantity(index, amount);
+  cartChanged();
 }
 
 function renderCart() {
+  const cart = cartItems();
   if (!cart.length) {
     cartRoot.innerHTML = `
-      <div class="cart-topline"><h2 class="cart-heading" id="cart-title">YOUR CART</h2><button class="text-button" type="button" data-close-cart aria-label="Close cart">CLOSE ×</button></div>
-      <div class="cart-empty"><h3>YOUR CART IS EMPTY</h3><p>Explore the latest LAIN pieces.</p><a class="text-button" href="#store" data-close-cart>VIEW COLLECTION →</a></div>
+      <div class="cart-topline"><h2 class="cart-heading" id="cart-title">${t('yourCart')}</h2><button class="text-button" type="button" data-close-cart aria-label="${t('closeCart')}">${t('close')}</button></div>
+      <div class="cart-empty"><h3>${t('cartEmpty')}</h3><p>${t('exploreLatest')}</p><a class="text-button" href="#store" data-close-cart>${t('viewCollection')}</a></div>
     `;
     bindCartClose();
     return;
   }
 
-  const subtotal = cart.reduce((total, item) => {
+  const hasPendingPrice = cart.some(item => products.find(product => product.id === item.productId)?.price == null);
+  const subtotal = hasPendingPrice ? null : cart.reduce((total, item) => {
     const product = products.find(candidate => candidate.id === item.productId);
     return total + product.price * item.quantity;
   }, 0);
   const currency = products.find(product => product.id === cart[0].productId).currency;
   cartRoot.innerHTML = `
-    <div class="cart-topline"><h2 class="cart-heading" id="cart-title">YOUR CART <span class="catalog-count">(${cart.reduce((total, item) => total + item.quantity, 0)})</span></h2><button class="text-button" type="button" data-close-cart aria-label="Close cart">CLOSE ×</button></div>
+    <div class="cart-topline"><h2 class="cart-heading" id="cart-title">${t('yourCart')} <span class="catalog-count">(${cart.reduce((total, item) => total + item.quantity, 0)})</span></h2><button class="text-button" type="button" data-close-cart aria-label="${t('closeCart')}">${t('close')}</button></div>
     <div class="cart-items">${cart.map((item, index) => {
       const product = products.find(candidate => candidate.id === item.productId);
       const variant = [item.variantId || item.size, item.color].filter(Boolean).join(' / ');
       return `<article class="cart-item">
         <img src="${escapeHtml(productImages(product)[0])}" alt="${escapeHtml(product.name)}">
         <div><h3 class="cart-item-name">${escapeHtml(product.name)}</h3><p class="cart-item-options">${escapeHtml(variant)}</p>
-          <div class="cart-item-bottom"><div class="cart-quantity"><button class="quantity-button" type="button" data-cart-index="${index}" data-cart-change="-1" aria-label="Decrease ${escapeHtml(product.name)} quantity">−</button><span class="quantity-value">${item.quantity}</span><button class="quantity-button" type="button" data-cart-index="${index}" data-cart-change="1" aria-label="Increase ${escapeHtml(product.name)} quantity">+</button></div><span>${money(product.price * item.quantity, product.currency)}</span></div>
-          <button class="cart-remove" type="button" data-remove-index="${index}">Remove</button>
+          <div class="cart-item-bottom"><div class="cart-quantity"><button class="quantity-button" type="button" data-cart-index="${index}" data-cart-change="-1" aria-label="Decrease ${escapeHtml(product.name)} quantity">−</button><span class="quantity-value">${item.quantity}</span><button class="quantity-button" type="button" data-cart-index="${index}" data-cart-change="1" aria-label="Increase ${escapeHtml(product.name)} quantity">+</button></div><span>${money(product.price == null ? null : product.price * item.quantity, product.currency)}</span></div>
+          <button class="cart-remove" type="button" data-remove-index="${index}">${t('remove')}</button>
         </div>
       </article>`;
     }).join('')}</div>
-    <div class="cart-footer"><div class="cart-subtotal"><span>Subtotal</span><strong>${money(subtotal, currency)}</strong></div><button class="checkout-button" type="button" data-checkout>CHECKOUT</button><p class="checkout-message" aria-live="polite"></p></div>
+    <div class="cart-footer"><div class="cart-subtotal"><span>${t('subtotal')}</span><strong>${money(subtotal, currency)}</strong></div><button class="checkout-button" type="button" data-checkout>${t('checkout')}</button><p class="checkout-message" aria-live="polite"></p></div>
   `;
   bindCartClose();
   cartRoot.querySelectorAll('[data-cart-change]').forEach(button => button.addEventListener('click', () => changeCartQuantity(Number(button.dataset.cartIndex), Number(button.dataset.cartChange))));
   cartRoot.querySelectorAll('[data-remove-index]').forEach(button => button.addEventListener('click', () => {
-    cart.splice(Number(button.dataset.removeIndex), 1);
-    saveCart();
+    cartService.remove(Number(button.dataset.removeIndex));
+    cartChanged();
   }));
   cartRoot.querySelector('[data-checkout]').addEventListener('click', () => {
-    cartRoot.querySelector('.checkout-message').textContent = 'Checkout coming soon.';
+    window.location.href = '/checkout.html';
   });
 }
 
@@ -305,13 +299,9 @@ cartDialog.addEventListener('click', event => {
   if (event.target === cartDialog) cartDialog.close();
 });
 
-document.querySelectorAll('[data-language]').forEach(button => {
-  button.setAttribute('aria-pressed', String(button.dataset.language === language));
-  button.addEventListener('click', () => {
-    language = setLanguage(button.dataset.language);
-    document.querySelectorAll('[data-language]').forEach(item => item.setAttribute('aria-pressed', String(item.dataset.language === language)));
+language = initLanguageSelector(nextLanguage => {
+    language = nextLanguage;
     renderRoute();
-  });
 });
 
 renderRoute();
