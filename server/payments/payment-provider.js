@@ -7,5 +7,6 @@ export class PaymentProvider {
   }
   async createPayment(_order) { throw new Error('Payment provider not configured.'); }
   async getPaymentStatus(_paymentId) { throw new Error('Payment provider not configured.'); }
+  async findPaymentOrder(_criteria) { throw new Error('Payment provider not configured.'); }
   async refundPayment(_paymentId, _amount) { throw new Error('Payment provider not configured.'); }
 }

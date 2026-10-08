@@ -38,6 +38,20 @@ test('Ops renders one order with customer, items, delivery, shipping and payment
   }
 });
 
+test('Ops highlights payments requiring manual review and renders safe reconciliation diagnostics', async () => {
+  const repository = repositoryWithOrder();
+  repository.listPaymentAttemptsNeedingReview = async () => [{ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', orderId: id,
+    publicOrderId: order.publicOrderId, updatedAt: order.updatedAt, status: 'processing', providerOrderId: 'ORDTSTOPS1',
+    providerPaymentId: 'PAYOPS1', reconciliationFailures: 8, reconciliationLastError: 'PROVIDER_UNAVAILABLE' }];
+  repository.listPaymentAttemptsForOrder = async () => [{ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', orderId: id,
+    updatedAt: order.updatedAt, status: 'processing', providerOrderId: 'ORDTSTOPS1', providerPaymentId: 'PAYOPS1',
+    reconciliationFailures: 8, reconciliationLastError: 'PROVIDER_UNAVAILABLE', reconciliationNeedsReview: true }];
+  const list = await request(createOpsApp({ orderRepository: repository })).get('/orders').expect(200);
+  for (const content of ['MANUAL REVIEW', 'ORDTSTOPS1', 'PAYOPS1', 'PROVIDER_UNAVAILABLE']) assert.match(list.text, new RegExp(content));
+  const detail = await request(createOpsApp({ orderRepository: repository })).get(`/orders/${id}`).expect(200);
+  for (const content of ['PAYMENT ATTEMPTS', 'ORDTSTOPS1', 'PAYOPS1', 'MANUAL REVIEW</dt><dd>YES']) assert.match(detail.text, new RegExp(content));
+});
+
 test('Ops returns 404 for missing orders and 405 for every write method', async () => {
   const app = createOpsApp({ orderRepository: repositoryWithOrder() });
   await request(app).get('/orders/33333333-3333-4333-8333-333333333333').expect(404);
@@ -47,7 +61,8 @@ test('Ops returns 404 for missing orders and 405 for every write method', async 
 
 test('Ops never exposes database errors or environment secrets', async () => {
   const secret = 'postgresql://secret-user:secret-password@host/database'; const logs = [];
-  const repository = { listRecent: async () => { throw new Error(secret); }, findById: async () => null };
+  const repository = { listRecent: async () => { throw new Error(secret); }, listPaymentAttemptsNeedingReview: async () => [], findById: async () => null,
+    listPaymentAttemptsForOrder: async () => [] };
   const response = await request(createOpsApp({ orderRepository: repository, logger: { error: (...entry) => logs.push(entry) } })).get('/orders').expect(500);
   assert.equal(response.text.includes(secret), false); assert.equal(JSON.stringify(logs).includes(secret), false); assert.match(response.text, /OPS UNAVAILABLE/); assert.equal(logs.length, 1);
 });

@@ -7,12 +7,14 @@
     "start": "node --env-file-if-exists=.env server/index.js",
     "dev": "node --env-file-if-exists=.env --watch server/index.js",
     "ops": "node --env-file-if-exists=.env ops/index.js",
-    "test": "node --test",
+    "test": "node --env-file-if-exists=.env.test --env-file-if-exists=.env scripts/test-runner.js unit",
+    "test:setup": "node --env-file-if-exists=.env.test --env-file-if-exists=.env scripts/test-runner.js setup",
+    "test:postgres": "node --env-file-if-exists=.env.test --env-file-if-exists=.env scripts/test-runner.js postgres",
+    "test:all": "node --env-file-if-exists=.env.test --env-file-if-exists=.env scripts/test-runner.js all",
     "test:enviopack-live": "node --env-file=.env scripts/enviopack-live.js",
-    "test:coverage": "c8 --reporter=text node --test",
+    "test:coverage": "c8 --reporter=text node scripts/test-runner.js unit",
     "db:migrate": "node --env-file-if-exists=.env server/db/migrate.js up",
-    "db:rollback": "node --env-file-if-exists=.env server/db/migrate.js down",
-    "test:postgres": "node --test test/postgres-order-repository.test.js"
+    "db:rollback": "node --env-file-if-exists=.env server/db/migrate.js down"
   },
   "dependencies": {
     "express": "^5.1.0",

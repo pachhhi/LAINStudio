@@ -38,6 +38,15 @@ a { color: inherit; text-decoration: none; }
 .form-note, .checkout-status { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .checkout-status { color: var(--accent); }
 .checkout-success { max-width: 760px; margin: 70px auto; }
+.payment-step { max-width: 680px; margin: 42px auto 80px; }
+.payment-step > span { color: var(--accent); font-size: 11px; letter-spacing: .18em; }
+.payment-step h1 { margin: 16px 0 10px; }
+.payment-step > p { color: var(--muted); line-height: 1.6; }
+.payment-step dl { display: grid; gap: 10px; margin: 28px 0; }
+.payment-step dl div { display: flex; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+.payment-step dt { color: var(--muted-2); font-size: 11px; letter-spacing: .12em; }
+.payment-step dd { margin: 0; overflow-wrap: anywhere; text-align: right; }
+#cardPaymentBrick_container { min-height: 260px; }
 .checkout-success dl { margin: 38px 0; border-top: 1px solid var(--border); }
 .checkout-success dl div { display: flex; justify-content: space-between; gap: 20px; padding: 16px 0; border-bottom: 1px solid var(--border); }
 .checkout-success dt { color: var(--muted); font-size: 11px; letter-spacing: .12em; }

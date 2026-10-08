@@ -29,10 +29,13 @@ test('full CartStore to HTTP repository flow uses only product IDs and quantitie
   const memory = new Map();
   const store = new CartStore({ getItem: key => memory.get(key), setItem: (key, value) => memory.set(key, value), removeItem: key => memory.delete(key) });
   const cart = new CartService({ catalog: testProducts, store });
+  const repository = new InMemoryOrderRepository();
   cart.add(item);
-  const response = await request(createTestApp()).post('/api/checkout').set('Idempotency-Key', key('fullflow')).send({ ...payload, items: cart.getItems() }).expect(201);
-  assert.equal(response.body.order.items[0].unitPrice, 29000);
+  const response = await request(createTestApp({ orderRepository: repository })).post('/api/checkout').set('Idempotency-Key', key('fullflow')).send({ ...payload, items: cart.getItems() }).expect(201);
+  const stored = await repository.findById(response.body.order.id);
   assert.equal(response.body.order.total, 29100);
+  assert.equal(stored.items[0].unitPrice, 29000);
+  assert.equal(response.body.order.customer, undefined); assert.equal(response.body.order.items, undefined);
 });
 
 test('checkout requires JSON and a valid idempotency key', async () => {
@@ -89,6 +92,8 @@ test('security headers are present and cross-origin access is not enabled', asyn
   const response = await request(createTestApp()).get('/api/unknown');
   assert.equal(response.headers['x-powered-by'], undefined);
   assert.equal(response.headers['x-content-type-options'], 'nosniff');
+  assert.equal(response.headers['x-frame-options'], 'DENY');
+  assert.equal(response.headers['permissions-policy'], 'camera=(), microphone=(), geolocation=()');
   assert.equal(response.headers['cache-control'], 'no-store');
   assert.equal(response.headers['access-control-allow-origin'], undefined);
 });
@@ -110,6 +115,7 @@ test('reuse of an idempotency key with another payload returns 409', async () =>
 });
 
 test('mass assignment and prototype pollution payloads cannot alter the order or globals', async () => {
+  const repository = new InMemoryOrderRepository();
   const attackObject = {
     items: [{ ...item, price: 1, unitPrice: 1, constructor: { prototype: { polluted: true } } }],
     customer, deliveryAddress, shippingMethodId: 'fake-standard', shipping: { price: 1 }, total: 1, status: 'paid', paymentProvider: 'fake', paymentId: 'x', id: 'owned',
@@ -117,8 +123,10 @@ test('mass assignment and prototype pollution payloads cannot alter the order or
   };
   Object.defineProperty(attackObject, '__proto__', { value: { polluted: true }, enumerable: true });
   const attack = JSON.stringify(attackObject);
-  const response = await request(createTestApp()).post('/api/checkout').set('Idempotency-Key', key('pollution')).set('Content-Type', 'application/json').send(attack).expect(201);
-  assert.equal(response.body.order.total, 29100); assert.equal(response.body.order.shipping.price, 100); assert.equal(response.body.order.status, 'pending'); assert.notEqual(response.body.order.id, 'owned');
+  const response = await request(createTestApp({ orderRepository: repository })).post('/api/checkout').set('Idempotency-Key', key('pollution')).set('Content-Type', 'application/json').send(attack).expect(201);
+  const stored = await repository.findById(response.body.order.id);
+  assert.equal(response.body.order.total, 29100); assert.equal(response.body.order.shipping, undefined); assert.equal(response.body.order.status, 'pending'); assert.notEqual(response.body.order.id, 'owned');
+  assert.equal(stored.shipping.price, 100);
   assert.equal({}.polluted, undefined);
 });
 
@@ -127,7 +135,7 @@ test('repository failures return generic 500 and are logged without a stack resp
   const repository = new InMemoryOrderRepository(); repository.save = () => { throw new Error('database password=do-not-leak'); };
   const response = await request(createTestApp({ orderRepository: repository, logger: { error: (...args) => logs.push(args) } })).post('/api/checkout').set('Idempotency-Key', key('repo')).send(payload).expect(500);
   assert.deepEqual(response.body, { error: 'Internal server error.', code: 'INTERNAL_ERROR' });
-  assert.equal(JSON.stringify(response.body).includes('password'), false); assert.equal(logs.length, 1);
+  assert.equal(JSON.stringify(response.body).includes('password'), false); assert.equal(JSON.stringify(logs).includes('do-not-leak'), false); assert.equal(logs.length, 1);
 });
 
 test('payment endpoint is backend-idempotent under concurrent HTTP requests', async () => {

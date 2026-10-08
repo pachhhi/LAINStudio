@@ -5,6 +5,7 @@ import { InMemoryOrderRepository } from '../server/orders/order-repository.js';
 import { OrderService } from '../server/orders/order-service.js';
 import { PaymentProvider } from '../server/payments/payment-provider.js';
 import { FakePaymentProvider } from '../test-support/fake-payment-provider.js';
+import { ValidationError } from '../server/errors.js';
 
 const payload = { items: [{ productId: 'lain-cap-01', variantId: 'One size', color: 'Black', quantity: 1 }], customer: { name: 'Test', email: 'test@example.com' } };
 function setup(provider = null) { const repository = new InMemoryOrderRepository(); const service = new OrderService({ catalogService: createTestCatalog(), orderRepository: repository, paymentProvider: provider }); return { service, order: service.create(payload) }; }
@@ -63,10 +64,38 @@ test('invalid provider responses fail safely', async () => {
   assert.equal((await service.getById(order.id)).status, 'failed');
 });
 
+test('payment input validation remains a validation error instead of a provider dependency error', async () => {
+  const provider = new FakePaymentProvider('approved');
+  provider.createPayment = async () => { throw new ValidationError('Only credit card payments are supported.'); };
+  const { service, order } = setup(provider);
+  await assert.rejects(service.startPayment(order.id, { idempotencyKey: 'invalid_payment_input_1234' }), error => {
+    assert.equal(error.code, 'VALIDATION_ERROR'); assert.equal(error.status, 400); return true;
+  });
+  assert.equal((await service.getById(order.id)).status, 'failed');
+});
+
 test('payment provider default contract methods fail closed', async () => {
   class IncompleteProvider extends PaymentProvider { constructor() { super('incomplete'); } }
   const provider = new IncompleteProvider();
   await assert.rejects(provider.createPayment({}), /not configured/);
   await assert.rejects(provider.getPaymentStatus('x'), /not configured/);
   await assert.rejects(provider.refundPayment('x', 1), /not configured/);
+});
+
+test('approved payments transition idempotently through partial refund and full refund', async () => {
+  const provider = new FakePaymentProvider('pending'); const { service, order } = setup(provider);
+  await service.startPayment(order.id, { idempotencyKey: 'refund_lifecycle_key_1234' });
+  provider.behavior = 'approved'; assert.equal((await service.reconcileProviderPayment('ORDTSTFAKE1')).status, 'paid');
+  provider.behavior = 'partially_refunded'; assert.equal((await service.reconcileProviderPayment('ORDTSTFAKE1')).status, 'partially_refunded');
+  assert.equal((await service.reconcileProviderPayment('ORDTSTFAKE1')).status, 'partially_refunded');
+  provider.behavior = 'refunded'; assert.equal((await service.reconcileProviderPayment('ORDTSTFAKE1')).status, 'refunded');
+});
+
+test('approved payments transition through chargeback without allowing stale approval downgrade', async () => {
+  const provider = new FakePaymentProvider('pending'); const { service, order } = setup(provider);
+  await service.startPayment(order.id, { idempotencyKey: 'chargeback_lifecycle_key_1234' });
+  provider.behavior = 'approved'; await service.reconcileProviderPayment('ORDTSTFAKE1');
+  provider.behavior = 'chargeback'; assert.equal((await service.reconcileProviderPayment('ORDTSTFAKE1')).status, 'chargeback');
+  provider.behavior = 'approved'; assert.equal((await service.reconcileProviderPayment('ORDTSTFAKE1')).status, 'chargeback');
+  provider.behavior = 'refunded'; assert.equal((await service.reconcileProviderPayment('ORDTSTFAKE1')).status, 'refunded');
 });

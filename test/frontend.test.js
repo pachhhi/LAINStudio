@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CartStore, CART_STORAGE_KEY } from '../cart-store.js';
 import { CartService } from '../cart-service.js';
-import { createCheckout, getPublicOrder, getShippingQuotes, orderConfirmationUrl } from '../checkout-api.js';
+import { createCheckout, createPayment, getPaymentConfig, getPublicOrder, getShippingQuotes, orderConfirmationUrl } from '../checkout-api.js';
 import { createSubmitGuard } from '../checkout-submit.js';
+import { CheckoutAttemptStore } from '../checkout-attempt.js';
 
 test('CartStore loads, saves, clears and tolerates unavailable storage', () => {
   const data = new Map(); const storage = { getItem: key => data.get(key), setItem: (key, value) => data.set(key, value), removeItem: key => data.delete(key) };
@@ -64,4 +65,41 @@ test('shipping API sends only destination and cart identifiers', async () => {
   await assert.rejects(getShippingQuotes('1722', 'Buenos Aires', [], { fetchImpl: async () => ({ ok: false, status: 400, json: async () => ({ error: 'Invalid cart', methods: [] }) }) }), /Invalid cart/);
   await assert.rejects(getShippingQuotes('1722', 'Buenos Aires', [], { fetchImpl: async () => ({ ok: false, status: 400,
     json: async () => ({ error: 'internal detail', code: 'shipping_product_missing_dimensions' }) }) }), /dimensions are not configured/);
+});
+
+test('payment config accepts only configured Mercado Pago TEST public data', async () => {
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ configured: true, provider: 'mercadopago', environment: 'test', publicKey: 'TEST-public' }) });
+  assert.deepEqual(await getPaymentConfig({ fetchImpl }), { configured: true, provider: 'mercadopago', environment: 'test', publicKey: 'TEST-public' });
+  await assert.rejects(getPaymentConfig({ fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ provider: 'none', environment: 'disabled', publicKey: '' }) }) }), /not configured/);
+});
+
+test('payment config accepts production public data without exposing backend credentials', async () => {
+  const result = await getPaymentConfig({ fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({
+    configured: true, provider: 'mercadopago', environment: 'production', publicKey: 'APP_USR-production-public'
+  }) }) });
+  assert.equal(result.environment, 'production'); assert.equal(result.publicKey, 'APP_USR-production-public');
+});
+
+test('payment API sends only the Brick token and non-sensitive payment fields', async () => {
+  let request;
+  const fetchImpl = async (url, options) => { request = { url, options }; return { ok: true, status: 200, json: async () => ({ order: { status: 'paid' } }) }; };
+  const cardData = { token: 'card_token_123456', payment_method_id: 'visa', installments: 1, issuer_id: '1', transaction_amount: 999,
+    payer: { email: 'ignored@example.com', identification: { type: 'DNI', number: '12345678' } }, cardNumber: 'should-never-be-sent' };
+  assert.equal((await createPayment('order/id', cardData, { idempotencyKey: 'payment_key_123456', fetchImpl })).status, 'paid');
+  assert.equal(request.url, '/api/orders/order%2Fid/payments');
+  assert.equal(request.options.headers['Idempotency-Key'], 'payment_key_123456');
+  assert.deepEqual(JSON.parse(request.options.body), { token: 'card_token_123456', paymentMethodId: 'visa', installments: 1,
+    issuerId: '1', identification: { type: 'DNI', number: '12345678' } });
+});
+
+test('checkout attempt survives refresh, rotates rejected payments and changes for a new cart', () => {
+  const data = new Map(); const storage = { getItem: key => data.get(key), setItem: (key, value) => data.set(key, value), removeItem: key => data.delete(key) };
+  let sequence = 0; const store = new CheckoutAttemptStore(storage, () => `uuid-${++sequence}`);
+  const cart = [{ productId: 'shirt', variantId: 'M', quantity: 1 }];
+  const first = store.load(cart); assert.equal(first.checkoutKey, 'uuid-1');
+  const withOrder = store.attachOrder(first, { id: 'order-1' }); assert.equal(withOrder.paymentKey, 'uuid-2');
+  assert.deepEqual(store.load(cart), withOrder);
+  const retry = store.rotatePaymentKey(withOrder); assert.equal(retry.paymentKey, 'uuid-3'); assert.equal(retry.checkoutKey, first.checkoutKey);
+  const nextCart = store.load([{ productId: 'shirt', variantId: 'L', quantity: 1 }]);
+  assert.equal(nextCart.checkoutKey, 'uuid-4'); assert.equal(nextCart.order, undefined);
 });

@@ -8,24 +8,23 @@ import { createTestCatalog } from '../test-support/catalog-fixture.js';
 import { MercadoPagoProvider } from '../server/payments/mercadopago-provider.js';
 
 const connectionString = process.env.TEST_DATABASE_URL;
-if (connectionString && process.env.DATABASE_URL === connectionString) {
-  throw new Error('TEST_DATABASE_URL must not be the same database as DATABASE_URL.');
-}
-const enabled = Boolean(connectionString);
-const pool = enabled ? new pg.Pool({ connectionString }) : null;
-const repository = enabled ? new PostgresOrderRepository({ pool }) : null;
+if (!connectionString) throw new Error('TEST_DATABASE_URL is required for PostgreSQL tests. Use npm run test:postgres or npm run test:all.');
+const databaseName = decodeURIComponent(new URL(connectionString).pathname.replace(/^\//, ''));
+if (!/test/i.test(databaseName) || process.env.DATABASE_URL === connectionString) throw new Error('Refusing to run PostgreSQL tests against a non-test database.');
+const pool = new pg.Pool({ connectionString });
+const repository = new PostgresOrderRepository({ pool });
 const customer = { name: "Robert'); DROP TABLE orders;--", email: 'db@example.com', phone: '+54 11 5555-5555' };
 const item = { productId: 'lain-cap-01', variantId: 'One size', color: 'Black', quantity: 1 };
 const payload = { items: [item], customer };
 const key = suffix => `postgres_key_${suffix}_123456`;
-const options = { skip: !enabled };
+const options = {};
 
 function service(repo = repository) { return new OrderService({ catalogService: createTestCatalog(), orderRepository: repo }); }
 
 beforeEach(async () => {
-  if (enabled) await pool.query('TRUNCATE payment_attempts, idempotency_keys, order_items, orders RESTART IDENTITY CASCADE');
+  await pool.query('TRUNCATE payment_attempts, idempotency_keys, order_items, orders RESTART IDENTITY CASCADE');
 });
-after(async () => { if (pool) await pool.end(); });
+after(async () => { await pool.end(); });
 
 test('creates and retrieves a durable order with items and SQL-safe customer input', options, async () => {
   const created = await service().create(payload, { idempotencyKey: key('create') });
@@ -172,13 +171,15 @@ test('different concurrent payment keys cannot claim the same order twice', opti
 test('MercadoPagoProvider mocked flow persists provider ID and durable idempotency key', options, async () => {
   let sent;
   const provider = new MercadoPagoProvider({ accessToken: 'TEST', environment: 'test', fetchImpl: async (_url, request) => {
-    sent = request; return { ok: true, status: 201, json: async () => ({ id: 987, status: 'approved', external_reference: JSON.parse(request.body).external_reference }) };
+    sent = request; return { ok: true, status: 201, json: async () => ({ id: 'ORDTST987', status: 'processed', status_detail: 'accredited',
+      external_reference: JSON.parse(request.body).external_reference, transactions: { payments: [{ id: 'PAY987', status: 'processed', status_detail: 'accredited' }] } }) };
   } });
   const orders = new OrderService({ catalogService: createTestCatalog(), orderRepository: repository, paymentProvider: provider });
   const order = await orders.create(payload, { idempotencyKey: key('mp_order') });
-  const paid = await orders.startPayment(order.id, { idempotencyKey: key('mp_payment'), paymentData: { token: 'card_token_123456', paymentMethodId: 'visa', installments: 1 } });
+  const paid = await orders.startPayment(order.id, { idempotencyKey: key('mp_payment'), paymentData: { token: 'card_token_123456', paymentMethodId: 'visa', paymentTypeId: 'credit_card', installments: 1 } });
   const attempt = (await pool.query('SELECT * FROM payment_attempts WHERE order_id=$1', [order.id])).rows[0];
-  assert.equal(paid.status, 'paid'); assert.equal(attempt.provider_payment_id, '987');
+  assert.equal(paid.status, 'paid'); assert.equal(attempt.provider_payment_id, 'PAY987'); assert.equal(attempt.provider_order_id, 'ORDTST987');
+  assert.equal(paid.paymentId, 'PAY987'); assert.equal(paid.providerOrderId, 'ORDTST987');
   assert.equal(attempt.provider_idempotency_key, attempt.id);
   assert.equal(sent.headers['X-Idempotency-Key'], attempt.id);
 });
@@ -188,17 +189,89 @@ test('timeout remains recoverable across OrderService restart without a second P
   const timeoutProvider = new MercadoPagoProvider({ accessToken: 'TEST', environment: 'test', fetchImpl: async () => { postCalls += 1; throw new Error('network'); } });
   const firstService = new OrderService({ catalogService: createTestCatalog(), orderRepository: repository, paymentProvider: timeoutProvider });
   const order = await firstService.create(payload, { idempotencyKey: key('timeout_order') }); const paymentKey = key('timeout_payment');
-  const paymentData = { token: 'card_token_123456', paymentMethodId: 'visa', installments: 1 };
+  const paymentData = { token: 'card_token_123456', paymentMethodId: 'visa', paymentTypeId: 'credit_card', installments: 1 };
   await assert.rejects(firstService.startPayment(order.id, { idempotencyKey: paymentKey, paymentData }), /network/);
   const attempt = (await pool.query('SELECT * FROM payment_attempts WHERE order_id=$1', [order.id])).rows[0];
   let recoveryPosts = 0;
   const recoveryProvider = new MercadoPagoProvider({ accessToken: 'TEST', environment: 'test', fetchImpl: async (url) => {
-    if (url.endsWith('/v1/payments/confirmed-1')) return { ok: true, status: 200, json: async () => ({ id: 'confirmed-1', status: 'approved', external_reference: attempt.id }) };
-    recoveryPosts += 1; return { ok: true, status: 201, json: async () => ({ id: 'duplicate', status: 'approved' }) };
+    if (url.endsWith('/v1/orders/ORDTSTCONFIRMED1')) return { ok: true, status: 200, json: async () => ({ id: 'ORDTSTCONFIRMED1', status: 'processed', status_detail: 'accredited', total_amount: '29000.00', external_reference: attempt.id,
+      transactions: { payments: [{ id: 'PAY-confirmed-1', status: 'processed', status_detail: 'accredited' }] } }) };
+    recoveryPosts += 1; return { ok: true, status: 201, json: async () => ({}) };
   } });
   const restarted = new OrderService({ catalogService: createTestCatalog(), orderRepository: repository, paymentProvider: recoveryProvider });
   const retry = await restarted.startPayment(order.id, { idempotencyKey: paymentKey, paymentData });
   assert.equal(retry.status, 'processing'); assert.equal(postCalls, 1); assert.equal(recoveryPosts, 0);
-  const reconciled = await restarted.reconcileProviderPayment('confirmed-1');
-  assert.equal(reconciled.status, 'paid'); assert.equal(reconciled.paymentId, 'confirmed-1');
+  const reconciled = await restarted.reconcileProviderPayment('ORDTSTCONFIRMED1');
+  assert.equal(reconciled.status, 'paid'); assert.equal(reconciled.paymentId, 'PAY-confirmed-1');
+  assert.equal(reconciled.providerOrderId, 'ORDTSTCONFIRMED1');
+  const reconciledAttempt = (await pool.query('SELECT provider_order_id,provider_payment_id FROM payment_attempts WHERE id=$1', [attempt.id])).rows[0];
+  assert.deepEqual(reconciledAttempt, { provider_order_id: 'ORDTSTCONFIRMED1', provider_payment_id: 'PAY-confirmed-1' });
+});
+
+test('PostgreSQL reconciliation claims exclude concurrent backend processes', options, async () => {
+  const order = await service().create(payload, { idempotencyKey: key('reconcile_claim_order') });
+  await repository.beginPayment({ orderId: order.id, key: `payment:${key('reconcile_claim')}`, fingerprint: order.id, provider: 'mercadopago' });
+  const other = new PostgresOrderRepository({ pool: new pg.Pool({ connectionString }) });
+  try {
+    const [first, second] = await Promise.all([
+      repository.claimPaymentReconciliationBatch({ provider: 'mercadopago' }),
+      other.claimPaymentReconciliationBatch({ provider: 'mercadopago' })
+    ]);
+    assert.equal(first.length + second.length, 1);
+    assert.equal(new Set([...first, ...second].map(attempt => attempt.id)).size, 1);
+  } finally { await other.close(); }
+});
+
+test('expired reconciliation lease is recoverable after backend restart and retry limit is durable', options, async () => {
+  const order = await service().create(payload, { idempotencyKey: key('reconcile_restart_order') });
+  await repository.beginPayment({ orderId: order.id, key: `payment:${key('reconcile_restart')}`, fingerprint: order.id, provider: 'mercadopago' });
+  const [abandoned] = await repository.claimPaymentReconciliationBatch({ provider: 'mercadopago', lockSeconds: 90, maxFailures: 1 });
+  await pool.query('UPDATE payment_attempts SET reconciliation_locked_until=now()-interval \'1 second\' WHERE id=$1', [abandoned.id]);
+  const restarted = new PostgresOrderRepository({ pool: new pg.Pool({ connectionString }) });
+  try {
+    const [recovered] = await restarted.claimPaymentReconciliationBatch({ provider: 'mercadopago', maxFailures: 1 });
+    assert.equal(recovered.id, abandoned.id);
+    const released = await restarted.releasePaymentReconciliation({ attemptId: recovered.id, lockId: recovered.lockId,
+      outcome: 'transient_error', retryAt: new Date(Date.now() + 60_000).toISOString(), errorCode: 'PROVIDER_UNAVAILABLE', maxFailures: 1 });
+    assert.deepEqual(released, { reconciliation_failures: 1, reconciliation_needs_review: true });
+    assert.equal((await restarted.claimPaymentReconciliationBatch({ provider: 'mercadopago', maxFailures: 1 })).length, 0);
+    const reviews = await restarted.listPaymentAttemptsNeedingReview();
+    assert.equal(reviews.length, 1); assert.equal(reviews[0].id, recovered.id);
+    assert.equal(reviews[0].reconciliationLastError, 'PROVIDER_UNAVAILABLE'); assert.equal(reviews[0].reconciliationFailures, 1);
+    const detail = await restarted.listPaymentAttemptsForOrder(order.id);
+    assert.equal(detail.length, 1); assert.equal(detail[0].reconciliationNeedsReview, true);
+  } finally { await restarted.close(); }
+});
+
+test('recent approved payments are periodically claimable while expired monitoring windows are not', options, async () => {
+  const order = await service().create(payload, { idempotencyKey: key('approved_monitor_order') });
+  const claim = await repository.beginPayment({ orderId: order.id, key: `payment:${key('approved_monitor')}`,
+    fingerprint: order.id, provider: 'mercadopago' });
+  await repository.completePayment({ attemptId: claim.attemptId, orderId: order.id, status: 'approved', orderStatus: 'paid',
+    providerPaymentId: 'PAY-MONITOR', providerOrderId: 'ORDTSTMONITOR', provider: 'mercadopago' });
+  await pool.query('UPDATE payment_attempts SET reconciliation_next_at=now()-interval \'1 second\' WHERE id=$1', [claim.attemptId]);
+  const [recent] = await repository.claimPaymentReconciliationBatch({ provider: 'mercadopago' });
+  assert.equal(recent.id, claim.attemptId); assert.equal(recent.status, 'approved');
+  await repository.releasePaymentReconciliation({ attemptId: recent.id, lockId: recent.lockId, outcome: 'success',
+    retryAt: new Date(Date.now() + 6 * 3600_000).toISOString() });
+  await pool.query(`UPDATE payment_attempts SET reconciliation_monitor_until=now()-interval '1 second',
+    reconciliation_next_at=now()-interval '1 second' WHERE id=$1`, [claim.attemptId]);
+  assert.equal((await repository.claimPaymentReconciliationBatch({ provider: 'mercadopago' })).length, 0);
+});
+
+test('PostgreSQL persists partial refund and chargeback lifecycle states', options, async () => {
+  const order = await service().create(payload, { idempotencyKey: key('post_payment_states_order') });
+  const claim = await repository.beginPayment({ orderId: order.id, key: `payment:${key('post_payment_states')}`,
+    fingerprint: order.id, provider: 'mercadopago' });
+  await repository.completePayment({ attemptId: claim.attemptId, orderId: order.id, status: 'approved', orderStatus: 'paid',
+    providerPaymentId: 'PAY-STATES', providerOrderId: 'ORDTSTSTATES', provider: 'mercadopago' });
+  const paid = await repository.findById(order.id);
+  const partial = await repository.reconcilePayment({ attemptId: claim.attemptId, expectedOrderVersion: paid.version,
+    expectedOrderStatus: 'paid', providerPaymentId: 'PAY-STATES', providerOrderId: 'ORDTSTSTATES',
+    paymentStatus: 'partially_refunded', orderStatus: 'partially_refunded' });
+  const chargeback = await repository.reconcilePayment({ attemptId: claim.attemptId, expectedOrderVersion: partial.version,
+    expectedOrderStatus: 'partially_refunded', providerPaymentId: 'PAY-STATES', providerOrderId: 'ORDTSTSTATES',
+    paymentStatus: 'chargeback', orderStatus: 'chargeback' });
+  assert.equal(chargeback.status, 'chargeback');
+  assert.equal((await pool.query('SELECT status FROM payment_attempts WHERE id=$1', [claim.attemptId])).rows[0].status, 'chargeback');
 });

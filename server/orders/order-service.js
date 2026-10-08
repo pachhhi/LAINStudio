@@ -1,17 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import { ConflictError, DependencyError, NotFoundError, ValidationError } from '../errors.js';
 
-const ORDER_STATUSES = ['pending', 'awaiting_payment', 'processing', 'paid', 'failed', 'cancelled', 'refunded'];
+const ORDER_STATUSES = ['pending', 'awaiting_payment', 'processing', 'paid', 'failed', 'cancelled', 'partially_refunded', 'refunded', 'chargeback'];
 const ALLOWED_TRANSITIONS = Object.freeze({
   pending: ['awaiting_payment', 'cancelled'],
   awaiting_payment: ['processing', 'paid', 'failed', 'cancelled'],
   processing: ['paid', 'failed', 'cancelled'],
-  paid: ['refunded'],
+  paid: ['partially_refunded', 'refunded', 'chargeback'],
+  partially_refunded: ['refunded', 'chargeback'],
+  chargeback: ['refunded'],
   failed: ['awaiting_payment', 'cancelled'],
   cancelled: [],
   refunded: []
 });
-const PROVIDER_STATUS_TO_ORDER = Object.freeze({ approved: 'paid', pending: 'processing', rejected: 'failed', cancelled: 'cancelled', refunded: 'refunded' });
+const PROVIDER_STATUS_TO_ORDER = Object.freeze({ approved: 'paid', pending: 'processing', rejected: 'failed', cancelled: 'cancelled',
+  partially_refunded: 'partially_refunded', refunded: 'refunded', chargeback: 'chargeback' });
 
 function requireString(value, field, { min = 1, max, pattern } = {}) {
   if (typeof value !== 'string') throw new ValidationError(`${field} must be a string.`);
@@ -42,7 +45,7 @@ export class OrderService {
       province: deliveryAddress.province, cart: payload.items }, payload.shippingMethodId);
     const quotedAt = this.clock().toISOString();
     const shipping = { provider: selected.provider, service: selected.name, carrier: selected.carrier,
-      price: selected.price, estimatedHours: selected.estimatedHours, postalCode: deliveryAddress.postalCode,
+      price: Math.round(selected.price), estimatedHours: selected.estimatedHours, postalCode: deliveryAddress.postalCode,
       province: deliveryAddress.province, quotedAt };
     const fingerprintShipping = { deliveryAddress, shippingMethodId: payload.shippingMethodId };
     return this.create(payload, { idempotencyKey, shipping, deliveryAddress, fingerprintShipping });
@@ -69,7 +72,7 @@ export class OrderService {
       total: subtotal + (shipping ? Math.round(shipping.price) : 0),
       currency: [...currencies][0], customer: normalizedCustomer,
       ...(shipping ? { shipping, shippingStatus: 'selected', deliveryAddress } : {}),
-      status: 'pending', paymentProvider: null, paymentId: null,
+      status: 'pending', paymentProvider: null, paymentId: null, providerOrderId: null,
       createdAt: now, updatedAt: now, version: 1
     };
     if (!idempotencyKey) return this.orderRepository.save(order);
@@ -150,29 +153,55 @@ export class OrderService {
       if (!ALLOWED_TRANSITIONS[claim.order.status]?.includes(targetStatus)) throw new DependencyError('Payment provider returned an impossible initial status.');
       return this.orderRepository.completePayment({
         attemptId: claim.attemptId, orderId: order.id, status: result.status,
-        orderStatus: targetStatus, provider: this.paymentProvider.name, providerPaymentId: result.paymentId
+        orderStatus: targetStatus, provider: this.paymentProvider.name, providerPaymentId: result.paymentId,
+        providerOrderId: typeof result.orderId === 'string' ? result.orderId : null
       });
     } catch (error) {
       if (error?.indeterminate) await this.orderRepository.markPaymentProcessing({ attemptId: claim.attemptId, orderId: order.id });
       else await this.orderRepository.failPayment({ attemptId: claim.attemptId, orderId: order.id });
       error.orderId = order.id; error.paymentAttemptId = claim.attemptId;
-      if (error instanceof DependencyError) throw error;
+      if (error instanceof ValidationError || error instanceof DependencyError) throw error;
       throw new DependencyError(error?.code === 'TIMEOUT' ? 'Payment provider timed out.' : 'Payment provider failed.');
     }
   }
 
-  async reconcileProviderPayment(providerPaymentId) {
+  async reconcileProviderPayment(providerOrderId) {
     if (!this.paymentProvider) throw new DependencyError('Payment provider is not configured.');
-    const result = await this.paymentProvider.getPaymentStatus(String(providerPaymentId));
+    const result = await this.paymentProvider.getPaymentStatus(String(providerOrderId));
+    return this.reconcileProviderResult(result);
+  }
+
+  async reconcilePaymentAttempt(attempt) {
+    if (!this.paymentProvider) throw new DependencyError('Payment provider is not configured.');
+    const result = attempt.providerOrderId
+      ? await this.paymentProvider.getPaymentStatus(attempt.providerOrderId)
+      : await this.paymentProvider.findPaymentOrder({ externalReference: attempt.id, createdAt: attempt.createdAt });
+    if (!result) return null;
+    return this.reconcileProviderResult(result);
+  }
+
+  async reconcileProviderResult(result) {
     if (!result || !Object.hasOwn(PROVIDER_STATUS_TO_ORDER, result.status)) throw new DependencyError('Payment provider returned an invalid status.');
     const attempt = await this.orderRepository.findPaymentAttempt({ provider: this.paymentProvider.name,
       providerPaymentId: result.paymentId, externalReference: result.externalReference });
     if (!attempt) return null;
+    if (result.externalReference !== attempt.id || (attempt.providerOrderId && attempt.providerOrderId !== result.orderId)) {
+      throw new DependencyError('Provider order does not match the local payment attempt.');
+    }
     const target = PROVIDER_STATUS_TO_ORDER[result.status]; const current = attempt.order;
-    if (current.status === target) return current;
-    if (!ALLOWED_TRANSITIONS[current.status]?.includes(target)) return current;
+    const decimals = current.currency === 'ARS' || current.currency === 'CLP' || current.currency === 'COP' ? 0 : 2;
+    const expectedAmount = (current.total / (10 ** decimals)).toFixed(2);
+    if (result.totalAmount == null || !Number.isFinite(Number(result.totalAmount))
+      || Number(result.totalAmount).toFixed(2) !== expectedAmount) {
+      throw new DependencyError('Provider order amount does not match the local order.');
+    }
+    if (current.status === target && attempt.providerOrderId === result.orderId
+      && attempt.providerPaymentId === result.paymentId) return current;
+    if (current.status !== target && !ALLOWED_TRANSITIONS[current.status]?.includes(target)) return current;
     return this.orderRepository.reconcilePayment({ attemptId: attempt.id, expectedOrderVersion: current.version,
-      expectedOrderStatus: current.status, providerPaymentId: result.paymentId, paymentStatus: result.status, orderStatus: target });
+      expectedOrderStatus: current.status, providerPaymentId: result.paymentId,
+      providerOrderId: typeof result.orderId === 'string' ? result.orderId : null,
+      paymentStatus: result.status, orderStatus: target });
   }
 
   normalizeCustomer(customer) {

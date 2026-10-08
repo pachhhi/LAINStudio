@@ -1,6 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import pg from 'pg';
 
 const migrationDirectory = join(dirname(fileURLToPath(import.meta.url)), 'migrations');
@@ -16,9 +17,8 @@ function sections(sql) {
   return { up: upPart.replace('-- migrate:up', '').trim(), down: down.trim() };
 }
 
-async function main() {
-  const direction = process.argv[2] === 'down' ? 'down' : 'up';
-  const pool = new pg.Pool({ connectionString: databaseUrl() });
+export async function runMigrations(connectionString, direction = 'up') {
+  const pool = new pg.Pool({ connectionString });
   const client = await pool.connect();
   try {
     await client.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -46,4 +46,10 @@ async function main() {
   } finally { client.release(); await pool.end(); }
 }
 
-main().catch(error => { console.error(`Migration failed: ${error.message}`); process.exitCode = 1; });
+async function main() {
+  await runMigrations(databaseUrl(), process.argv[2] === 'down' ? 'down' : 'up');
+}
+
+if (import.meta.url === pathToFileURL(resolve(process.argv[1] || '')).href) {
+  main().catch(error => { console.error(`Migration failed: ${error.message}`); process.exitCode = 1; });
+}

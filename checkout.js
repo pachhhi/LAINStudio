@@ -2,8 +2,9 @@ import { products } from './products.js';
 import { formatPrice } from './commerce.js';
 import { CartStore } from './cart-store.js';
 import { CartService } from './cart-service.js';
-import { createCheckout, getShippingQuotes, orderConfirmationUrl } from './checkout-api.js';
+import { createCheckout, createPayment, getPaymentConfig, getPublicOrder, getShippingQuotes, orderConfirmationUrl } from './checkout-api.js';
 import { createSubmitGuard } from './checkout-submit.js';
+import { CheckoutAttemptStore } from './checkout-attempt.js';
 import { resolveLanguage, translate } from './i18n.js';
 
 const root = document.querySelector('#checkout-root');
@@ -12,9 +13,11 @@ const language = resolveLanguage();
 const t = key => translate(language, key);
 const escapeHtml = value => String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 const images = product => Array.isArray(product.images) ? product.images : Object.values(product.images || {});
-const checkoutKey = sessionStorage.getItem('lain-checkout-key') || crypto.randomUUID();
-sessionStorage.setItem('lain-checkout-key', checkoutKey);
-const guardedCheckout = createSubmitGuard((items, customer, shipping) => createCheckout(items, customer, { ...shipping, idempotencyKey: checkoutKey }));
+const attemptStore = new CheckoutAttemptStore();
+let checkoutAttempt;
+let paymentBrickController = null;
+const logPayment = (event, details = {}) => console.info(`[LAIN checkout] ${event}`, details);
+const guardedCheckout = createSubmitGuard((items, customer, shipping) => createCheckout(items, customer, { ...shipping, idempotencyKey: checkoutAttempt.checkoutKey }));
 let shippingPrice = null;
 let selectedShippingMethodId = null;
 let checkoutHasPendingPrice = false;
@@ -25,6 +28,11 @@ function render() {
   const items = cart.getItems();
   if (!items.length) {
     root.innerHTML = `<a class="back-link" href="/#store">${t('backToCollection')}</a><section class="checkout-empty"><span>LAIN / CHECKOUT</span><h1>${t('emptyCheckout')}</h1><p>${t('emptyCheckoutCopy')}</p></section>`;
+    return;
+  }
+  checkoutAttempt = attemptStore.load(items);
+  if (checkoutAttempt.order) {
+    renderPayment(checkoutAttempt.order);
     return;
   }
   const resolved = items.map(item => ({ ...item, product: products.find(product => product.id === item.productId) }));
@@ -123,6 +131,79 @@ function updateTotals(subtotal, currency) {
   root.querySelector('#checkout-total').textContent = formatPrice(subtotal == null ? null : subtotal + (shippingPrice || 0), currency);
 }
 
+function finishPayment(order) {
+  cart.clear();
+  attemptStore.clear();
+  window.location.assign(orderConfirmationUrl(order.publicOrderId));
+}
+
+async function recoverPaymentStatus(order) {
+  try { return await getPublicOrder(order.publicOrderId); }
+  catch { return null; }
+}
+
+async function renderPayment(order) {
+  if (paymentBrickController) {
+    await Promise.resolve(paymentBrickController.unmount()).catch(() => {});
+    paymentBrickController = null;
+  }
+  root.innerHTML = `<a class="back-link" href="/#store">${t('backToStore')}</a>
+    <section class="payment-step" aria-labelledby="payment-title">
+      <span id="payment-environment">LAIN / MERCADO PAGO</span><h1 id="payment-title">${t('completePayment')}</h1>
+      <p id="payment-notice">${t('loadingPayment')}</p>
+      <dl><div><dt>${t('publicOrderId')}</dt><dd>${escapeHtml(order.publicOrderId)}</dd></div><div><dt>${t('total')}</dt><dd>${formatPrice(order.total, order.currency)}</dd></div></dl>
+      <div id="cardPaymentBrick_container" aria-live="polite"></div>
+      <p id="payment-status" class="checkout-status" role="status">${t('loadingPayment')}</p>
+    </section>`;
+  const status = root.querySelector('#payment-status');
+  try {
+    logPayment('Mercado Pago SDK loaded', { loaded: typeof window.MercadoPago === 'function' });
+    const config = await getPaymentConfig();
+    logPayment('payment config loaded', { provider: config.provider, environment: config.environment, publicKeyAvailable: Boolean(config.publicKey) });
+    root.querySelector('#payment-environment').textContent = `LAIN / MERCADO PAGO ${config.environment === 'test' ? 'TEST' : ''}`.trim();
+    root.querySelector('#payment-notice').textContent = t(config.environment === 'test' ? 'testPaymentNotice' : 'productionPaymentNotice');
+    if (typeof window.MercadoPago !== 'function') throw new Error(t('paymentSdkUnavailable'));
+    const mercadoPago = new window.MercadoPago(config.publicKey, { locale: language === 'es' ? 'es-AR' : 'en-US' });
+    paymentBrickController = await mercadoPago.bricks().create('cardPayment', 'cardPaymentBrick_container', {
+      initialization: { amount: order.total, payer: { email: order.customer?.email || undefined } },
+      customization: { visual: { style: { theme: 'dark', customVariables: { baseColor: '#75ff38', formBackgroundColor: '#0c0b0b', inputBackgroundColor: '#151515' } }, texts: { formSubmit: t('payNow') } } },
+      callbacks: {
+        onReady: () => { status.textContent = ''; },
+        onSubmit: async cardData => {
+          status.textContent = t('processingPayment');
+          logPayment('sending tokenized payment', { publicOrderId: order.publicOrderId });
+          try {
+            const updated = await createPayment(order.id, cardData, { idempotencyKey: checkoutAttempt.paymentKey });
+            logPayment('payment response received', { publicOrderId: updated.publicOrderId, status: updated.status });
+            if (['paid', 'processing', 'awaiting_payment'].includes(updated.status)) return finishPayment(updated);
+            if (['failed', 'cancelled'].includes(updated.status)) {
+              checkoutAttempt = attemptStore.rotatePaymentKey(checkoutAttempt);
+              status.textContent = t('paymentRejectedRetry');
+              return;
+            }
+            status.textContent = t('paymentStatusUnknown');
+          } catch (error) {
+            const recovered = await recoverPaymentStatus(order);
+            if (recovered && ['paid', 'processing', 'awaiting_payment'].includes(recovered.status)) return finishPayment(recovered);
+            if (recovered && ['failed', 'cancelled'].includes(recovered.status)) checkoutAttempt = attemptStore.rotatePaymentKey(checkoutAttempt);
+            status.textContent = error.statusDetail
+              ? `Payment rejected: ${error.statusDetail}`
+              : (recovered?.status === 'failed' ? t('paymentRejectedRetry') : error.message);
+          }
+        },
+        onError: error => {
+          logPayment('Card Payment Brick error', { type: error?.type || 'unknown', message: error?.message || 'unknown' });
+          status.textContent = t('paymentFormError');
+        }
+      }
+    });
+    logPayment('Card Payment Brick created', { publicOrderId: order.publicOrderId });
+  } catch (error) {
+    logPayment('payment step error', { message: error.message });
+    status.textContent = error.message;
+  }
+}
+
 async function submitCheckout(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -136,9 +217,10 @@ async function submitCheckout(event) {
     const deliveryAddress = { street: formData.get('street'), streetNumber: formData.get('streetNumber'),
       apartmentFloor: formData.get('apartmentFloor'), city: formData.get('city'), province: formData.get('province'), postalCode: formData.get('postalCode') };
     const order = await guardedCheckout(cart.getItems(), customer, { deliveryAddress, shippingMethodId: selectedShippingMethodId });
-    sessionStorage.removeItem('lain-checkout-key');
-    cart.clear();
-    window.location.assign(orderConfirmationUrl(order.publicOrderId));
+    logPayment('order created or recovered', { publicOrderId: order.publicOrderId, status: order.status, total: order.total, currency: order.currency });
+    checkoutAttempt = attemptStore.attachOrder(checkoutAttempt, { id: order.id, publicOrderId: order.publicOrderId,
+      total: order.total, currency: order.currency, status: order.status, customer: { email: customer.email } });
+    await renderPayment(checkoutAttempt.order);
   } catch (error) {
     status.textContent = error.message;
     button.disabled = false;

@@ -15,6 +15,16 @@ const cartService = new CartService({ catalog: products, store: new CartStore() 
 
 function t(key) { return translate(language, key); }
 function money(price, currency) { return formatPrice(price, currency, 'es-AR', t('priceTba')); }
+function productDescription(product) {
+  if (typeof product.description === 'string') return product.description;
+  return product.description?.[language] || product.description?.en || '';
+}
+function sizeGuide(product) {
+  const guide = product.sizeGuide;
+  if (!guide) return t('sizeGuidePending');
+  return t('sizeGuideReference').replace('{size}', guide.referenceSize).replace('{width}', guide.widthCm)
+    .replace('{length}', guide.lengthCm).replace('{shoulderSleeve}', guide.shoulderSleeveCm);
+}
 
 function productImages(product) {
   return Array.isArray(product.images)
@@ -153,7 +163,7 @@ function renderProduct(product) {
         <span class="detail-category">${escapeHtml(product.category)}</span>
         <h2 class="detail-name">${escapeHtml(product.name)}</h2>
         <p class="detail-price">${money(product.price, product.currency)}</p>
-        ${product.description ? `<p class="detail-description">${escapeHtml(product.description)}</p>` : ''}
+        ${productDescription(product) ? `<p class="detail-description">${escapeHtml(productDescription(product))}</p>` : ''}
         <span class="detail-availability ${product.available === false ? 'is-unavailable' : ''}">${product.available === false ? t('unavailable') : t('madeToOrder')}</span>
         ${product.colors?.length ? `<fieldset class="variant-group"><legend>${t('color')} / <span id="selected-color">${escapeHtml(selectedColor)}</span></legend><div class="color-options">${product.colors.map((color, index) => `
           <button class="color-option" type="button" data-color-index="${index}" aria-pressed="${index === 0}">${escapeHtml(color)}</button>
@@ -161,7 +171,7 @@ function renderProduct(product) {
         ${variants.length ? `<fieldset class="variant-group" data-variant-group><legend>${t('size')} / <span id="selected-size">${t('selectSize')}</span></legend><div class="size-options">${variants.map((variant, index) => `
           <button class="size-option" type="button" data-size-index="${index}" aria-pressed="false">${escapeHtml(variant.size || variant.options?.size || variant.id)}</button>
         `).join('')}</div></fieldset>` : ''}
-        ${variants.length ? `<button class="size-guide-link" type="button" data-size-guide>${t('sizeGuide')}</button><p class="size-guide-note" id="size-guide-note" hidden>${t('sizeGuidePending')}</p>` : ''}
+        ${variants.length ? `<button class="size-guide-link" type="button" data-size-guide>${t('sizeGuide')}</button><p class="size-guide-note" id="size-guide-note" hidden>${escapeHtml(sizeGuide(product))}</p>` : ''}
         <p class="variant-error" id="variant-error" role="alert" hidden>${t('validationRequired')}</p>
         <div class="quantity-row"><span class="quantity-label">${t('quantity')}</span><div class="quantity-control"><button class="quantity-button" type="button" data-quantity="-1" aria-label="${t('decreaseQuantity')}">−</button><span id="detail-quantity" class="quantity-value" aria-live="polite">1</span><button class="quantity-button" type="button" data-quantity="1" aria-label="${t('increaseQuantity')}">+</button></div></div>
         <button class="add-cart-button" type="button" data-add-product ${product.available === false ? 'disabled' : ''}>${product.available === false ? t('unavailable').toUpperCase() : t('addToCart')}</button>

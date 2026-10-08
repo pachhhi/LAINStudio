@@ -45,6 +45,52 @@ export async function getShippingQuotes(postalCode, province, cart, { fetchImpl 
   return body;
 }
 
+async function paymentRequest(url, options, { fetchImpl = fetch, timeoutMs = 20000 } = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try { response = await fetchImpl(url, { ...options, signal: controller.signal }); }
+  catch (error) {
+    const result = new Error(error.name === 'AbortError' ? 'The payment request timed out. Check the order status before retrying.' : 'Could not connect to the payment service. Check the order status before retrying.');
+    result.code = error.name === 'AbortError' ? 'PAYMENT_TIMEOUT' : 'PAYMENT_CONNECTION_FAILED';
+    throw result;
+  } finally { clearTimeout(timeout); }
+  const body = await response.json().catch(() => null);
+  if (!body || typeof body !== 'object') throw new Error('The payment service returned an invalid response.');
+  if (!response.ok) {
+    const error = new Error(body.error || `Could not process the payment (${response.status}).`);
+    error.code = body.code;
+    error.status = response.status;
+    if (typeof body.statusDetail === 'string') error.statusDetail = body.statusDetail;
+    throw error;
+  }
+  return body;
+}
+
+export async function getPaymentConfig(options = {}) {
+  const body = await paymentRequest('/api/payments/config', {}, options);
+  if (body.configured !== true || body.provider !== 'mercadopago' || !['test', 'production'].includes(body.environment)
+    || typeof body.publicKey !== 'string' || !body.publicKey) {
+    throw new Error('Mercado Pago is not configured.');
+  }
+  return body;
+}
+
+export async function createPayment(orderId, cardData, { idempotencyKey, ...options } = {}) {
+  const body = await paymentRequest(`/api/orders/${encodeURIComponent(orderId)}/payments`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify({
+      token: cardData.token,
+      paymentMethodId: cardData.payment_method_id,
+      installments: cardData.installments,
+      ...(cardData.issuer_id ? { issuerId: cardData.issuer_id } : {}),
+      ...(cardData.payer?.identification ? { identification: cardData.payer.identification } : {})
+    })
+  }, options);
+  if (!body.order || typeof body.order.status !== 'string') throw new Error('The payment service returned an invalid order.');
+  return body.order;
+}
+
 export function orderConfirmationUrl(publicOrderId) {
   return `/order.html?id=${encodeURIComponent(publicOrderId)}`;
 }

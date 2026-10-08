@@ -12,7 +12,9 @@ const t = key => translate(language, key);
 const statusCopy = {
   pending: [t('orderCreated'), t('orderPending')], awaiting_payment: [t('orderCreated'), t('orderAwaiting')],
   processing: [t('paymentProcessing'), t('orderProcessing')], paid: [t('paymentApproved'), t('orderPaid')],
-  failed: [t('paymentNotApproved'), t('orderFailed')], cancelled: [t('orderCancelledLabel'), t('orderCancelled')], refunded: [t('paymentRefunded'), t('orderRefunded')]
+  failed: [t('paymentNotApproved'), t('orderFailed')], cancelled: [t('orderCancelledLabel'), t('orderCancelled')],
+  partially_refunded: [t('paymentPartiallyRefunded'), t('orderPartiallyRefunded')], refunded: [t('paymentRefunded'), t('orderRefunded')],
+  chargeback: [t('paymentChargeback'), t('orderChargeback')]
 };
 
 function renderError(title, message) {
@@ -20,11 +22,20 @@ function renderError(title, message) {
   root.innerHTML = `<section class="checkout-empty"><span>LAIN / ORDER</span><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p><a class="back-link" href="/#store">${t('returnStore')}</a></section>`;
 }
 
-function renderOrder(order) {
+function renderUnconfirmedOrder(order) {
   const copy = statusCopy[order.status] || [t('orderCreated'), t('orderPending')];
   root.setAttribute('aria-busy', 'false');
+  root.innerHTML = `<section class="checkout-empty order-unconfirmed">
+    <span>${copy[0]}</span><h1>${t('paymentNotConfirmed')}</h1><p>${copy[1]}</p>
+    <dl><div><dt>${t('publicOrderId')}</dt><dd>${escapeHtml(order.publicOrderId)}</dd></div><div><dt>${t('status')}</dt><dd>${escapeHtml(order.status)}</dd></div></dl>
+    <a class="back-link" href="/#store">${t('returnStore')}</a>
+  </section>`;
+}
+
+function renderOrder(order) {
+  root.setAttribute('aria-busy', 'false');
   root.innerHTML = `<section class="checkout-success order-confirmation">
-    <span>${copy[0]}</span><h1>${t('orderReceived')}</h1><p>${copy[1]}</p>
+    <span>${t('paymentApproved')}</span><h1>${t('orderReceived')}</h1><p>${t('orderPaid')}</p>
     <dl><div><dt>${t('publicOrderId')}</dt><dd>${escapeHtml(order.publicOrderId)}</dd></div><div><dt>${t('status')}</dt><dd>${escapeHtml(order.status)}</dd></div></dl>
     <section class="order-summary" aria-labelledby="order-items-title"><h2 id="order-items-title">${t('items')}</h2>
       ${order.items.map(item => `<article class="summary-item"><div><h3>${escapeHtml(item.name)}</h3><p>${escapeHtml([item.variantId, item.color].filter(Boolean).join(' / '))}</p><span>${t('qty')} ${item.quantity}</span></div><strong>${formatPrice(item.lineTotal, order.currency)}</strong></article>`).join('')}
@@ -40,7 +51,11 @@ function renderOrder(order) {
 
 async function loadOrder() {
   if (!validPublicOrderId) return renderError(t('invalidOrder'), t('invalidOrderCopy'));
-  try { renderOrder(await getPublicOrder(publicOrderId)); }
+  try {
+    const order = await getPublicOrder(publicOrderId);
+    if (order.status !== 'paid') return renderUnconfirmedOrder(order);
+    renderOrder(order);
+  }
   catch (error) { renderError(t('orderLoadError'), error.message); }
 }
 

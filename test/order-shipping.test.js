@@ -43,13 +43,13 @@ test('order re-quotes server-side, ignores client price and persists shipping sn
   const { app, repository, calls } = setup();
   const response = await request(app).post('/api/checkout').set('Idempotency-Key', key('snapshot'))
     .send({ ...payload, shipping: { provider: 'attacker', price: 1 }, shippingPrice: 1, total: 1 }).expect(201);
-  const order = response.body.order;
+  const order = await repository.findById(response.body.order.id);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].province, 'B'); assert.equal(calls[0].postalCode, '1722'); assert.equal(calls[0].weightKg, 0.5);
-  assert.equal(order.shipping.price, 1234.5); assert.equal(order.total, 58000 + 1235);
+  assert.equal(order.shipping.price, 1235); assert.equal(order.total, 58000 + 1235);
   assert.deepEqual(order.deliveryAddress, deliveryAddress); assert.equal(order.shippingStatus, 'selected');
   assert.deepEqual({ ...order.shipping, quotedAt: '<time>' }, { provider: 'enviopack', service: 'Standard', carrier: 'Carrier',
-    price: 1234.5, estimatedHours: 24, postalCode: '1722', province: 'Buenos Aires', quotedAt: '<time>' });
+    price: 1235, estimatedHours: 24, postalCode: '1722', province: 'Buenos Aires', quotedAt: '<time>' });
   assert.match(order.shipping.quotedAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.deepEqual((await repository.findById(order.id)).shipping, order.shipping);
 });
