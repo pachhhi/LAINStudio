@@ -37,7 +37,7 @@ async function start() {
     console.error(`LAIN Store startup failed: ${error.message}`); await orderRepository.close(); process.exitCode = 1; return;
   }
   const app = createApp({ orderRepository, paymentProvider, paymentPublicKey: mercadoPagoPublicKey,
-    paymentEnvironment, webhookSecret, shippingProvider });
+    paymentEnvironment, webhookSecret, publicBaseUrl: process.env.PUBLIC_BASE_URL || '', shippingProvider });
   const reconciler = paymentProvider ? new PaymentReconciler({ orderRepository, orderService: app.locals.orderService, paymentProvider }) : null;
   const server = app.listen(port, host, () => {
     console.log(`LAIN Store listening on ${host}:${port} (${paymentProvider ? `mercadopago ${paymentEnvironment}` : 'payments disabled'}, ${shippingProvider.isConfigured() ? 'enviopack enabled' : 'shipping disabled'})`);

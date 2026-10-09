@@ -2,7 +2,7 @@ import { products } from './products.js';
 import { formatPrice } from './commerce.js';
 import { CartStore } from './cart-store.js';
 import { CartService } from './cart-service.js';
-import { createCheckout, createPayment, getPaymentConfig, getPublicOrder, getShippingQuotes, orderConfirmationUrl } from './checkout-api.js';
+import { createCheckout, createHostedCheckout, createPayment, getPaymentConfig, getPublicOrder, getShippingQuotes, orderConfirmationUrl } from './checkout-api.js';
 import { canSubmitCheckout, createSubmitGuard, normalizeShippingPrice, resolveDeliverySelection } from './checkout-submit.js';
 import { CheckoutAttemptStore } from './checkout-attempt.js';
 import { resolveLanguage, translate } from './i18n.js';
@@ -23,6 +23,7 @@ let paymentConfigPromise = null;
 const logPayment = (event, details = {}) => console.info(`[LAIN checkout] ${event}`, details);
 const guardedCheckout = createSubmitGuard((items, customer, delivery) => createCheckout(items, customer, { ...delivery, idempotencyKey: checkoutAttempt.checkoutKey }));
 const guardedIntegratedPayment = createSubmitGuard(processIntegratedPayment);
+const guardedHostedPayment = createSubmitGuard(processHostedPayment);
 let shippingPrice = null;
 let checkoutHasPendingPrice = false;
 let shippingRequest = 0;
@@ -79,7 +80,10 @@ function render() {
         </fieldset>
         <fieldset class="shipping-methods" aria-labelledby="payment-title">
           <legend id="payment-title">${t('payment')}</legend>
+          <label class="shipping-method"><input type="radio" name="paymentFlow" value="card"${checkoutAttempt.paymentFlow !== 'checkout_pro' ? ' checked' : ''}><span><strong>${t('creditCard')}</strong><small>${t('creditCardCopy')}</small></span></label>
+          <label class="shipping-method"><input type="radio" name="paymentFlow" value="checkout_pro"${checkoutAttempt.paymentFlow === 'checkout_pro' ? ' checked' : ''}><span><strong>${t('payWithMercadoPago')}</strong><small>${t('payWithMercadoPagoCopy')}</small></span></label>
           <div id="cardPaymentBrick_container" aria-live="polite"></div>
+          <button id="checkout-pro-button" type="button" hidden>${t('payWithMercadoPago')}</button>
           <p id="payment-status" class="checkout-status" role="status"></p>
         </fieldset>
       </div>
@@ -102,6 +106,12 @@ function render() {
     updateCreateButton(form);
     schedulePaymentBrick(form, subtotal, currency);
   });
+  form.querySelectorAll('input[name="paymentFlow"]').forEach(input => input.addEventListener('change', async event => {
+    if (!event.target.checked || checkoutAttempt.order) return;
+    checkoutAttempt = attemptStore.selectPaymentFlow(checkoutAttempt, event.target.value);
+    await syncPaymentMethod(form, subtotal, currency);
+  }));
+  form.querySelector('#checkout-pro-button').addEventListener('click', () => guardedHostedPayment({ form }));
   form.addEventListener('input', () => { updateCreateButton(form); schedulePaymentBrick(form, subtotal, currency); });
   form.addEventListener('change', () => { updateCreateButton(form); schedulePaymentBrick(form, subtotal, currency); });
 }
@@ -180,7 +190,18 @@ async function unmountPaymentBrick() {
 
 function schedulePaymentBrick(form, subtotal, currency) {
   clearTimeout(paymentBrickTimer);
-  paymentBrickTimer = setTimeout(() => syncPaymentBrick(form, subtotal, currency), 250);
+  paymentBrickTimer = setTimeout(() => syncPaymentMethod(form, subtotal, currency), 250);
+}
+
+async function syncPaymentMethod(form, subtotal, currency) {
+  const hosted = checkoutAttempt.paymentFlow === 'checkout_pro';
+  const button = form.querySelector('#checkout-pro-button');
+  const container = form.querySelector('#cardPaymentBrick_container');
+  button.hidden = !hosted;
+  container.hidden = hosted;
+  button.disabled = hosted && !updateCreateButton(form);
+  if (hosted) { await unmountPaymentBrick(); return; }
+  return syncPaymentBrick(form, subtotal, currency);
 }
 
 async function syncPaymentBrick(form, subtotal, currency, authoritativeAmount = null) {
@@ -268,6 +289,37 @@ async function processIntegratedPayment(cardData, { form, subtotal, currency, mo
   }
 }
 
+async function processHostedPayment({ form = null, existingOrder = null }) {
+  const scope = form || root;
+  const status = scope.querySelector('#payment-status');
+  const button = scope.querySelector('#checkout-pro-button');
+  if (form && !updateCreateButton(form)) return;
+  button.disabled = true;
+  status.textContent = t('creatingOrder');
+  try {
+    let order = existingOrder || checkoutAttempt.order;
+    if (!order) {
+      const { customer, delivery } = checkoutData(form);
+      order = await guardedCheckout(cart.getItems(), customer, delivery);
+      checkoutAttempt = attemptStore.attachOrder(checkoutAttempt, { id: order.id, publicOrderId: order.publicOrderId,
+        total: order.total, currency: order.currency, status: order.status });
+      logPayment('order created or recovered', { publicOrderId: order.publicOrderId, status: order.status, total: order.total, currency: order.currency });
+    }
+    form?.querySelectorAll('input[name], select[name]').forEach(field => { field.disabled = true; });
+    status.textContent = t('redirectingToMercadoPago');
+    const hosted = await createHostedCheckout(order.id, { idempotencyKey: checkoutAttempt.paymentKey });
+    logPayment('hosted checkout created or recovered', { publicOrderId: hosted.order.publicOrderId, status: hosted.order.status });
+    window.location.assign(hosted.checkoutUrl);
+  } catch (error) {
+    const order = checkoutAttempt.order;
+    const recovered = order ? await recoverPaymentStatus(order) : null;
+    if (recovered?.status === 'paid') return finishPayment(recovered);
+    status.textContent = recovered && ['processing', 'awaiting_payment'].includes(recovered.status)
+      ? t('hostedPaymentPending') : error.message;
+    if (!recovered || recovered.status === 'failed') button.disabled = false;
+  }
+}
+
 function finishPayment(order) {
   cart.clear();
   attemptStore.clear();
@@ -284,14 +336,21 @@ async function renderPayment(order) {
     await Promise.resolve(paymentBrickController.unmount()).catch(() => {});
     paymentBrickController = null;
   }
+  const hostedFlow = checkoutAttempt.paymentFlow === 'checkout_pro';
   root.innerHTML = `<a class="back-link" href="/#store">${t('backToStore')}</a>
     <section class="payment-step" aria-labelledby="payment-title">
       <h1 id="payment-title">${t('payment')}</h1>
       <dl><div><dt>${t('publicOrderId')}</dt><dd>${escapeHtml(order.publicOrderId)}</dd></div><div><dt>${t('total')}</dt><dd>${formatPrice(order.total, order.currency)}</dd></div></dl>
-      <div id="cardPaymentBrick_container" aria-live="polite"></div>
+      <div id="cardPaymentBrick_container" aria-live="polite"${hostedFlow ? ' hidden' : ''}></div>
+      ${hostedFlow ? `<div class="customer-form"><button id="checkout-pro-button" type="button">${t('payWithMercadoPago')}</button></div>` : ''}
       <p id="payment-status" class="checkout-status" role="status">${t('loadingPayment')}</p>
     </section>`;
   const status = root.querySelector('#payment-status');
+  if (hostedFlow) {
+    status.textContent = t('hostedPaymentPending');
+    root.querySelector('#checkout-pro-button').addEventListener('click', () => guardedHostedPayment({ existingOrder: order }));
+    return;
+  }
   try {
     logPayment('Mercado Pago SDK loaded', { loaded: typeof window.MercadoPago === 'function' });
     const config = await getPaymentConfig();

@@ -14,6 +14,24 @@ function providerOrderIdPattern(environment) {
   return environment === 'test' ? /^ORDTST[A-Z0-9]+$/ : /^ORD(?!TST)[A-Z0-9]+$/;
 }
 
+function validateCheckoutUrl(value, { environment, orderId } = {}) {
+  let url;
+  try { url = new URL(value); } catch { throw new MercadoPagoProviderError('Mercado Pago returned an invalid checkout URL.', { indeterminate: true }); }
+  const allowedHosts = new Set(['mercadopago.com.ar', 'www.mercadopago.com.ar']);
+  if (url.protocol !== 'https:' || !allowedHosts.has(url.hostname) || url.username || url.password
+    || !url.pathname.startsWith('/checkout/')) {
+    throw new MercadoPagoProviderError('Mercado Pago returned an invalid checkout URL.', { indeterminate: true });
+  }
+  const referencedOrderId = url.searchParams.get('order_id');
+  if (referencedOrderId !== orderId) {
+    throw new MercadoPagoProviderError('Mercado Pago returned a mismatched checkout URL.', { indeterminate: true });
+  }
+  if (!providerOrderIdPattern(environment).test(orderId)) {
+    throw new MercadoPagoProviderError('Mercado Pago returned a checkout URL for the wrong environment.', { indeterminate: true });
+  }
+  return url.toString();
+}
+
 export class MercadoPagoProviderError extends DependencyError {
   constructor(message, { indeterminate = false, providerStatus = null, providerError = null,
     providerMessage = null, providerCause = [], statusDetail = null, providerPaymentId = null, providerRequestId = null,
@@ -62,6 +80,12 @@ function rejectedOrderResult(payload, externalReference) {
   if (!detail) return null;
   const [paymentId, statusDetail] = detail.split(': ');
   return { orderId: null, paymentId, status: 'rejected', statusDetail, externalReference };
+}
+
+function responseCurrency(payload) {
+  if (typeof payload?.currency === 'string') return payload.currency;
+  if (typeof payload?.currency_id === 'string') return payload.currency_id;
+  return null;
 }
 
 export function minorUnitsToProviderAmount(amount, currency) {
@@ -179,17 +203,67 @@ export class MercadoPagoProvider extends PaymentProvider {
       || Number(payload.total_amount).toFixed(2) !== amount)) {
       throw new MercadoPagoProviderError('Mercado Pago returned a mismatched order amount.', { indeterminate: true });
     }
-    if (payload.currency_id != null && String(payload.currency_id) !== order.currency) {
+    const currency = responseCurrency(payload);
+    if (currency != null && currency !== order.currency) {
       throw new MercadoPagoProviderError('Mercado Pago returned a mismatched order currency.', { indeterminate: true });
     }
     let status;
     try { status = mapMercadoPagoStatus(payload.status, payload.status_detail); }
     catch (error) { error.indeterminate = true; throw error; }
     return { orderId: payload.id, paymentId: payment.id, status,
-      statusDetail: payload.status_detail || payment.status_detail || null,
+      statusDetail: payload.status_detail || payment?.status_detail || null,
       externalReference: String(payload.external_reference),
       totalAmount: payload.total_amount == null ? null : String(payload.total_amount),
-      ...(payload.currency_id == null ? {} : { currency: String(payload.currency_id) }) };
+      ...(currency == null ? {} : { currency }) };
+  }
+
+  async createHostedCheckout(order, context = {}) {
+    if (typeof context.providerIdempotencyKey !== 'string' || !context.providerIdempotencyKey) throw new ValidationError('Provider idempotency key is required.');
+    if (typeof context.paymentAttemptId !== 'string' || !/^[0-9a-f-]{36}$/i.test(context.paymentAttemptId)) throw new ValidationError('Payment attempt ID is required.');
+    const returnUrls = context.returnUrls;
+    if (!returnUrls || typeof returnUrls !== 'object') throw new ValidationError('Checkout return URLs are required.');
+    const validatedUrls = {};
+    for (const name of ['successUrl', 'failureUrl', 'pendingUrl']) {
+      let url;
+      try { url = new URL(returnUrls[name]); } catch { throw new ValidationError('Valid HTTPS checkout return URLs are required.'); }
+      if (url.protocol !== 'https:' || url.username || url.password) throw new ValidationError('Valid HTTPS checkout return URLs are required.');
+      validatedUrls[name] = url.toString();
+    }
+    const amount = minorUnitsToProviderAmount(order.total, order.currency).toFixed(2);
+    const requestBody = {
+      type: 'online', processing_mode: 'manual', total_amount: amount,
+      external_reference: context.paymentAttemptId,
+      payer: { email: this.environment === 'test' ? 'test@testuser.com' : order.customer.email },
+      config: { online: { success_url: validatedUrls.successUrl, failure_url: validatedUrls.failureUrl,
+        pending_url: validatedUrls.pendingUrl, auto_return: 'all' } }
+    };
+    this.logger.info?.('Mercado Pago hosted checkout request', {
+      totalAmount: amount, payerEmailPresent: Boolean(requestBody.payer.email), paymentAttemptId: context.paymentAttemptId
+    });
+    const payload = await this.request('/v1/orders', { method: 'POST', idempotencyKey: context.providerIdempotencyKey, body: requestBody });
+    if (typeof payload.id !== 'string' || !providerOrderIdPattern(this.environment).test(payload.id)
+      || typeof payload.status !== 'string' || typeof payload.checkout_url !== 'string') {
+      throw new MercadoPagoProviderError('Mercado Pago returned a malformed hosted checkout order.', { indeterminate: true });
+    }
+    if (String(payload.external_reference || '') !== context.paymentAttemptId) {
+      throw new MercadoPagoProviderError('Mercado Pago returned a mismatched payment reference.', { indeterminate: true });
+    }
+    if (payload.total_amount != null && (!Number.isFinite(Number(payload.total_amount)) || Number(payload.total_amount).toFixed(2) !== amount)) {
+      throw new MercadoPagoProviderError('Mercado Pago returned a mismatched order amount.', { indeterminate: true });
+    }
+    const currency = responseCurrency(payload);
+    if (currency != null && currency !== order.currency) {
+      throw new MercadoPagoProviderError('Mercado Pago returned a mismatched order currency.', { indeterminate: true });
+    }
+    let status;
+    try { status = mapMercadoPagoStatus(payload.status, payload.status_detail); }
+    catch (error) { error.indeterminate = true; throw error; }
+    if (status !== 'pending') throw new MercadoPagoProviderError('Mercado Pago returned an impossible initial hosted checkout status.', { indeterminate: true });
+    return { orderId: payload.id, paymentId: null, status, statusDetail: payload.status_detail || null,
+      checkoutUrl: validateCheckoutUrl(payload.checkout_url, { environment: this.environment, orderId: payload.id }),
+      externalReference: String(payload.external_reference),
+      totalAmount: payload.total_amount == null ? null : String(payload.total_amount),
+      ...(currency == null ? {} : { currency }) };
   }
 
   async getPaymentStatus(orderId) {
@@ -197,17 +271,19 @@ export class MercadoPagoProvider extends PaymentProvider {
     if (typeof orderId !== 'string' || !orderIdPattern.test(orderId)) throw new ValidationError(`A valid ${this.environment} provider order ID is required.`);
     const payload = await this.request(`/v1/orders/${encodeURIComponent(orderId)}`);
     const payment = payload.transactions?.payments?.[0];
-    if (typeof payload.id !== 'string' || typeof payload.status !== 'string' || typeof payment?.id !== 'string') {
+    if (typeof payload.id !== 'string' || typeof payload.status !== 'string'
+      || (payment?.id != null && typeof payment.id !== 'string')) {
       throw new MercadoPagoProviderError('Mercado Pago returned a malformed order status.');
     }
     if (payload.id !== orderId || !orderIdPattern.test(payload.id)) {
       throw new MercadoPagoProviderError(`Mercado Pago returned a mismatched ${this.environment} order.`);
     }
-    return { orderId: payload.id, paymentId: payment.id, status: mapMercadoPagoStatus(payload.status, payload.status_detail),
-      statusDetail: payload.status_detail || payment.status_detail || null,
+    return { orderId: payload.id, paymentId: payment?.id || null, status: mapMercadoPagoStatus(payload.status, payload.status_detail),
+      statusDetail: payload.status_detail || payment?.status_detail || null,
       externalReference: payload.external_reference ? String(payload.external_reference) : null,
       totalAmount: typeof payload.total_amount === 'string' || typeof payload.total_amount === 'number' ? String(payload.total_amount) : null,
-      ...(typeof payload.currency_id === 'string' ? { currency: payload.currency_id } : {}) };
+      ...(typeof payload.checkout_url === 'string' ? { checkoutUrl: validateCheckoutUrl(payload.checkout_url, { environment: this.environment, orderId: payload.id }) } : {}),
+      ...(responseCurrency(payload) == null ? {} : { currency: responseCurrency(payload) }) };
   }
 
   async findPaymentOrder({ externalReference, createdAt }) {
@@ -233,4 +309,4 @@ export class MercadoPagoProvider extends PaymentProvider {
   }
 }
 
-export { CURRENCY_DECIMALS, SUPPORTED_CREDIT_PAYMENT_METHODS, SUPPORTED_PAYMENT_TYPE, providerOrderIdPattern };
+export { CURRENCY_DECIMALS, SUPPORTED_CREDIT_PAYMENT_METHODS, SUPPORTED_PAYMENT_TYPE, providerOrderIdPattern, validateCheckoutUrl };

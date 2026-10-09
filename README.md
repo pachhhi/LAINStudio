@@ -130,7 +130,7 @@ PAYMENT_ENV=test
 MERCADOPAGO_ACCESS_TOKEN=<test access token, solo backend>
 MERCADOPAGO_PUBLIC_KEY=<test public key>
 MP_WEBHOOK_SECRET=<test webhook secret>
-MP_NOTIFICATION_URL=https://example.test/api/webhooks/mercadopago
+PUBLIC_BASE_URL=https://example.test
 ```
 
 Producción exige variables separadas y no reutiliza credenciales genéricas:
@@ -145,8 +145,10 @@ MP_PRODUCTION_WEBHOOK_SECRET=<production webhook secret>
 
 El Access Token y el secret nunca se envían al browser; `/api/payments/config`
 expone sólo la Public Key y el entorno activo. El storefront carga el SDK oficial
-para Card Payment Brick.
-El checkout actual admite exclusivamente tarjetas de crédito. El Brick entrega
+para Card Payment Brick. La sección de pago permite conservar ese flujo o iniciar
+Checkout Pro mediante una order manual y su `checkout_url`; sus retornos usan
+`PUBLIC_BASE_URL`, pero la confirmación siempre consulta el estado local.
+El Card Brick admite exclusivamente tarjetas de crédito. El Brick entrega
 el token, `payment_method_id`, `issuer_id` y cuotas; el backend fija y valida
 `payment_method.type=credit_card`. Débito y prepaga se rechazan explícitamente
 en lugar de clasificarse como crédito. En esta etapa la allowlist es `visa`,
@@ -278,20 +280,29 @@ migraciones como pre-deploy, `npm start`, reinicio automático y el health check
 inyectado por Railway. El health check responde `503` si PostgreSQL no está
 disponible y no expone detalles de conexión.
 
-Configurar el servicio web con estas variables, sin guardar sus valores en Git:
+Para el primer deployment público, configurar el servicio web en modo seguro,
+sin pagos ni cotizaciones externas. Esto permite publicar la homepage y recibir
+consultas sin aceptar ventas antes de completar las pruebas E2E:
 
 ```text
 NODE_ENV=production
 DATABASE_URL=${{Postgres.DATABASE_URL}}
-PAYMENT_PROVIDER=mercadopago
+PAYMENT_PROVIDER=none
 PAYMENT_ENV=test
-MERCADOPAGO_TEST_PUBLIC_KEY=<secret variable>
-MERCADOPAGO_TEST_ACCESS_TOKEN=<secret variable>
-MP_TEST_WEBHOOK_SECRET=<secret variable>
-ENVIOPACK_ENABLED=true
-ENVIOPACK_API_KEY=<secret variable>
-ENVIOPACK_SECRET_KEY=<secret variable>
+PUBLIC_BASE_URL=https://<dominio-publico-railway>
+ENVIOPACK_ENABLED=false
 ```
+
+No cargar credenciales productivas en este primer deployment. Para validar el
+checkout en un entorno separado, usar credenciales TEST, configurar el evento
+`Order (Mercado Pago)` hacia
+`https://<dominio-test>/api/webhooks/mercadopago` y probar Card Payment Brick y
+Checkout Pro de punta a punta. Recién después de verificar pago aprobado,
+rechazado y pendiente, retorno, webhook, reconciliación, pedido persistido y
+cotización/retiro, cambiar a `PAYMENT_ENV=production`, cargar únicamente las
+variables `MERCADOPAGO_PRODUCTION_*` y `MP_PRODUCTION_WEBHOOK_SECRET`, y habilitar
+`ENVIOPACK_ENABLED=true` con sus credenciales. El cambio debe hacerse en un
+deployment controlado y seguido por una compra real de monto mínimo.
 
 Usar la referencia privada `DATABASE_URL` del servicio PostgreSQL dentro del
 mismo proyecto; no configurar `DATABASE_PUBLIC_URL` en la aplicación ni habilitar
@@ -306,3 +317,18 @@ Ops no forma parte del proceso web y su bind continúa fijo a `127.0.0.1:4000`.
 No crearle dominio público ni mapear ese puerto. Para el primer deployment puede
 quedar sin ejecutar; cualquier acceso remoto futuro requiere un túnel o gateway
 privado autenticado.
+
+### Smoke test y rollback
+
+Después de cada deployment comprobar, en este orden: `GET /health` devuelve 200,
+la homepage y `contact.js` cargan, el selector ES/EN funciona, los anchors STUDIO
+y STORE navegan, el catálogo filtra productos y la API pública no expone datos
+internos. Con pagos deshabilitados, `GET /api/payments/config` debe informar
+`configured: false`. En el entorno TEST, además completar una prueba de cada flujo
+de pago y confirmar el estado final consultando la orden pública y PostgreSQL.
+
+Si falla el health check, no promover el deployment. Si el fallo aparece después,
+restaurar desde Railway el deployment anterior; las migraciones actuales son
+aditivas, por lo que la versión anterior tolera la migración `009`. Ejecutar
+`npm run db:rollback` sólo con backup verificado y únicamente si se decide retirar
+también esa migración; nunca usarlo como primera respuesta ante un fallo de la app.

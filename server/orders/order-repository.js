@@ -64,21 +64,42 @@ export class InMemoryOrderRepository extends OrderRepository {
     catch (error) { this.releaseIdempotency(key); throw error; }
   }
 
-  async beginPayment({ orderId, key, fingerprint, provider }) {
+  async beginPayment({ orderId, key, fingerprint, provider, paymentFlow = 'card' }) {
     const reservation = this.reserveIdempotency(key, fingerprint);
     if (reservation.conflict) throw new ConflictError('Idempotency key was already used for another payment.');
-    if (!reservation.created) return { created: false, completed: reservation.record.state === 'completed',
-      order: structuredClone(reservation.record.value || this.#orders.get(fingerprint)) };
+    if (!reservation.created) {
+      const attempt = [...this.#paymentAttempts.values()].find(value => value.idempotencyKey === key);
+      return { created: false, completed: reservation.record.state === 'completed',
+        order: structuredClone(reservation.record.value || this.#orders.get(orderId)),
+        ...(attempt ? { attemptId: attempt.id, paymentFlow: attempt.paymentFlow, providerOrderId: attempt.providerOrderId,
+          providerCheckoutUrl: attempt.providerCheckoutUrl } : {}) };
+    }
     const order = this.#orders.get(orderId);
     if (!order) { this.releaseIdempotency(key); throw new NotFoundError('Order not found.'); }
     if (!['pending', 'failed'].includes(order.status)) { this.releaseIdempotency(key); throw new ConflictError(`Cannot start payment from ${order.status}.`); }
     const attemptId = randomUUID(); const now = new Date().toISOString();
-    this.#paymentAttempts.set(attemptId, { id: attemptId, orderId, provider, providerPaymentId: null, providerOrderId: null, providerIdempotencyKey: attemptId, idempotencyKey: key, status: 'created', requestFingerprint: fingerprint, createdAt: now, updatedAt: now,
+    this.#paymentAttempts.set(attemptId, { id: attemptId, orderId, provider, paymentFlow, providerCheckoutUrl: null,
+      providerPaymentId: null, providerOrderId: null, providerIdempotencyKey: attemptId, idempotencyKey: key, status: 'created', requestFingerprint: fingerprint, createdAt: now, updatedAt: now,
       reconciliationFailures: 0, reconciliationNextAt: null, reconciliationLockedUntil: null, reconciliationLockId: null, reconciliationLastError: null, reconciliationNeedsReview: false,
       reconciliationMonitorUntil: null });
     const next = { ...order, status: 'awaiting_payment', updatedAt: now, version: order.version + 1 };
     this.#orders.set(orderId, structuredClone(next));
     return { created: true, attemptId, providerIdempotencyKey: attemptId, order: structuredClone(next) };
+  }
+
+  async completeHostedCheckout({ attemptId, orderId, providerOrderId, providerCheckoutUrl, provider }) {
+    const attempt = this.#paymentAttempts.get(attemptId); const order = this.#orders.get(orderId);
+    if (!attempt || !order) throw new NotFoundError('Payment attempt not found.');
+    if (attempt.paymentFlow !== 'checkout_pro') throw new ConflictError('Payment attempt flow does not match.');
+    if (order.status !== 'awaiting_payment' && !(order.status === 'processing' && attempt.providerOrderId === providerOrderId)) {
+      throw new ConflictError(`Cannot complete hosted checkout from ${order.status}.`);
+    }
+    if (attempt.providerOrderId && attempt.providerOrderId !== providerOrderId) throw new ConflictError('Payment provider identifiers do not match the existing attempt.');
+    const now = new Date().toISOString();
+    Object.assign(attempt, { status: 'pending', providerOrderId, providerCheckoutUrl, updatedAt: now });
+    Object.assign(order, { status: 'processing', paymentProvider: provider, providerOrderId, updatedAt: now, version: order.version + 1 });
+    this.completeIdempotency(attempt.idempotencyKey, order);
+    return { order: structuredClone(order), checkoutUrl: providerCheckoutUrl };
   }
 
   async completePayment({ attemptId, orderId, status, orderStatus, providerPaymentId, providerOrderId = null, provider }) {
@@ -128,14 +149,17 @@ export class InMemoryOrderRepository extends OrderRepository {
     return { ...structuredClone(value), order: structuredClone(this.#orders.get(value.orderId)) };
   }
 
-  async reconcilePayment({ attemptId, expectedOrderVersion, expectedOrderStatus, providerPaymentId, providerOrderId = null, paymentStatus, orderStatus }) {
+  async reconcilePayment({ attemptId, expectedOrderVersion, expectedOrderStatus, providerPaymentId, providerOrderId = null, providerCheckoutUrl = null, paymentStatus, orderStatus }) {
     const attempt = this.#paymentAttempts.get(attemptId); const order = this.#orders.get(attempt?.orderId);
     if (!attempt || !order) return null;
     if (order.version !== expectedOrderVersion || order.status !== expectedOrderStatus) throw new ConflictError('Order was modified concurrently.');
-    const now = new Date().toISOString(); Object.assign(attempt, { providerPaymentId, providerOrderId, status: paymentStatus, updatedAt: now,
+    const now = new Date().toISOString(); Object.assign(attempt, { providerPaymentId: providerPaymentId || attempt.providerPaymentId,
+      providerOrderId: providerOrderId || attempt.providerOrderId, providerCheckoutUrl: providerCheckoutUrl || attempt.providerCheckoutUrl,
+      status: paymentStatus, updatedAt: now,
       ...(['approved', 'partially_refunded', 'chargeback'].includes(paymentStatus) && !attempt.reconciliationMonitorUntil
         ? { reconciliationMonitorUntil: new Date(Date.now() + 30 * 86400_000).toISOString() } : {}) });
-    Object.assign(order, { status: orderStatus, paymentProvider: attempt.provider, paymentId: providerPaymentId, providerOrderId, updatedAt: now, version: order.version + 1 });
+    Object.assign(order, { status: orderStatus, paymentProvider: attempt.provider,
+      paymentId: providerPaymentId || order.paymentId, providerOrderId: providerOrderId || order.providerOrderId, updatedAt: now, version: order.version + 1 });
     this.completeIdempotency(attempt.idempotencyKey, order);
     return structuredClone(order);
   }

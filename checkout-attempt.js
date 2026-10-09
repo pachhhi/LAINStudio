@@ -19,11 +19,13 @@ export class CheckoutAttemptStore {
     const fingerprint = cartFingerprint(items);
     try {
       const saved = JSON.parse(this.storage.getItem(CHECKOUT_ATTEMPT_KEY) || 'null');
-      if (saved?.cartFingerprint === fingerprint && typeof saved.checkoutKey === 'string') return saved;
+      if (saved?.cartFingerprint === fingerprint && typeof saved.checkoutKey === 'string') {
+        return { paymentFlow: 'card', ...saved };
+      }
     } catch {
       // A missing or malformed attempt starts a new checkout safely.
     }
-    const attempt = { cartFingerprint: fingerprint, checkoutKey: this.uuid() };
+    const attempt = { cartFingerprint: fingerprint, checkoutKey: this.uuid(), paymentFlow: 'card' };
     this.save(attempt);
     return attempt;
   }
@@ -45,6 +47,12 @@ export class CheckoutAttemptStore {
 
   rotatePaymentKey(attempt) {
     return this.save({ ...attempt, paymentKey: this.uuid() });
+  }
+
+  selectPaymentFlow(attempt, paymentFlow) {
+    if (attempt.order) return attempt;
+    if (!['card', 'checkout_pro'].includes(paymentFlow)) return attempt;
+    return this.save({ ...attempt, paymentFlow });
   }
 
   clear() {

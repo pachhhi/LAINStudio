@@ -147,6 +147,70 @@ export class OrderService {
     return operation;
   }
 
+  async startHostedPayment(orderId, { idempotencyKey, returnUrls } = {}) {
+    if (!this.paymentProvider) throw new DependencyError('Payment provider is not configured.');
+    this.validateIdempotencyKey(idempotencyKey);
+    const order = await this.getById(orderId);
+    if (!order) throw new NotFoundError('Order not found.');
+    const storageKey = `payment:${idempotencyKey}`;
+    if (this.#paymentOperations.has(storageKey)) return this.#paymentOperations.get(storageKey);
+    const operation = this.executeHostedPayment(order, storageKey, returnUrls).finally(() => this.#paymentOperations.delete(storageKey));
+    this.#paymentOperations.set(storageKey, operation);
+    return operation;
+  }
+
+  async executeHostedPayment(order, storageKey, returnUrls) {
+    const claim = await this.orderRepository.beginPayment({ orderId: order.id, key: storageKey,
+      fingerprint: `${order.id}:checkout_pro`, provider: this.paymentProvider.name, paymentFlow: 'checkout_pro' });
+    if (!claim.created) {
+      if (claim.paymentFlow && claim.paymentFlow !== 'checkout_pro') throw new ConflictError('This payment key belongs to another payment method.');
+      if (claim.providerCheckoutUrl) return { order: claim.order, checkoutUrl: claim.providerCheckoutUrl };
+      throw new ConflictError('The hosted payment is pending reconciliation. Do not start another payment.');
+    }
+    let result;
+    try {
+      result = await this.paymentProvider.createHostedCheckout(claim.order, {
+        paymentAttemptId: claim.attemptId, providerIdempotencyKey: claim.providerIdempotencyKey, returnUrls
+      });
+      if (!result || result.status !== 'pending' || typeof result.orderId !== 'string'
+        || typeof result.checkoutUrl !== 'string' || result.paymentId != null) {
+        const error = new DependencyError('Payment provider returned an invalid hosted checkout response.'); error.indeterminate = true; throw error;
+      }
+      this.validateProviderResultIdentity(result, claim);
+    } catch (error) {
+      if (error?.indeterminate) await this.orderRepository.markPaymentProcessing({ attemptId: claim.attemptId, orderId: order.id,
+        providerPaymentId: error.providerPaymentId || null });
+      else await this.orderRepository.failPayment({ attemptId: claim.attemptId, orderId: order.id });
+      error.orderId = order.id; error.paymentAttemptId = claim.attemptId;
+      if (error instanceof ValidationError || error instanceof DependencyError) throw error;
+      throw new DependencyError('Payment provider failed.');
+    }
+    try {
+      return await this.orderRepository.completeHostedCheckout({ attemptId: claim.attemptId, orderId: order.id,
+        provider: this.paymentProvider.name, providerOrderId: result.orderId, providerCheckoutUrl: result.checkoutUrl });
+    } catch (error) {
+      try { await this.orderRepository.markPaymentProcessing({ attemptId: claim.attemptId, orderId: order.id,
+        providerOrderId: result.orderId }); } catch {}
+      const wrapped = new DependencyError('Hosted checkout was created but could not be persisted.');
+      wrapped.indeterminate = true; wrapped.orderId = order.id; wrapped.paymentAttemptId = claim.attemptId; throw wrapped;
+    }
+  }
+
+  validateProviderResultIdentity(result, claim) {
+    if (result.externalReference !== claim.attemptId) {
+      const error = new DependencyError('Payment provider returned a mismatched payment reference.'); error.indeterminate = true; throw error;
+    }
+    const decimals = claim.order.currency === 'ARS' || claim.order.currency === 'CLP' || claim.order.currency === 'COP' ? 0 : 2;
+    const expectedAmount = (claim.order.total / (10 ** decimals)).toFixed(2);
+    if (result.totalAmount != null && (!Number.isFinite(Number(result.totalAmount))
+      || Number(result.totalAmount).toFixed(2) !== expectedAmount)) {
+      const error = new DependencyError('Payment provider returned a mismatched order amount.'); error.indeterminate = true; throw error;
+    }
+    if (result.currency != null && result.currency !== claim.order.currency) {
+      const error = new DependencyError('Payment provider returned a mismatched order currency.'); error.indeterminate = true; throw error;
+    }
+  }
+
   async executePayment(order, storageKey, paymentData) {
     const claim = await this.orderRepository.beginPayment({ orderId: order.id, key: storageKey, fingerprint: order.id, provider: this.paymentProvider.name });
     if (!claim.created) {
@@ -161,18 +225,7 @@ export class OrderService {
       if (!result || !Object.hasOwn(PROVIDER_STATUS_TO_ORDER, result.status) || typeof result.paymentId !== 'string') {
         const error = new DependencyError('Payment provider returned an invalid response.'); error.indeterminate = true; throw error;
       }
-      if (result.externalReference !== claim.attemptId) {
-        const error = new DependencyError('Payment provider returned a mismatched payment reference.'); error.indeterminate = true; throw error;
-      }
-      const decimals = claim.order.currency === 'ARS' || claim.order.currency === 'CLP' || claim.order.currency === 'COP' ? 0 : 2;
-      const expectedAmount = (claim.order.total / (10 ** decimals)).toFixed(2);
-      if (result.totalAmount != null && (!Number.isFinite(Number(result.totalAmount))
-        || Number(result.totalAmount).toFixed(2) !== expectedAmount)) {
-        const error = new DependencyError('Payment provider returned a mismatched order amount.'); error.indeterminate = true; throw error;
-      }
-      if (result.currency != null && result.currency !== claim.order.currency) {
-        const error = new DependencyError('Payment provider returned a mismatched order currency.'); error.indeterminate = true; throw error;
-      }
+      this.validateProviderResultIdentity(result, claim);
       targetStatus = PROVIDER_STATUS_TO_ORDER[result.status];
       if (!ALLOWED_TRANSITIONS[claim.order.status]?.includes(targetStatus)) {
         const error = new DependencyError('Payment provider returned an impossible initial status.'); error.indeterminate = true; throw error;
@@ -219,6 +272,7 @@ export class OrderService {
 
   async reconcileProviderResult(result) {
     if (!result || !Object.hasOwn(PROVIDER_STATUS_TO_ORDER, result.status)) throw new DependencyError('Payment provider returned an invalid status.');
+    if (result.status === 'approved' && typeof result.paymentId !== 'string') throw new DependencyError('Approved provider order has no payment ID.');
     const attempt = await this.orderRepository.findPaymentAttempt({ provider: this.paymentProvider.name,
       providerPaymentId: result.paymentId, externalReference: result.externalReference });
     if (!attempt) return null;
@@ -236,11 +290,12 @@ export class OrderService {
       throw new DependencyError('Provider order currency does not match the local order.');
     }
     if (current.status === target && attempt.providerOrderId === result.orderId
-      && attempt.providerPaymentId === result.paymentId) return current;
+      && (!result.paymentId || attempt.providerPaymentId === result.paymentId)) return current;
     if (current.status !== target && !ALLOWED_TRANSITIONS[current.status]?.includes(target)) return current;
     return this.orderRepository.reconcilePayment({ attemptId: attempt.id, expectedOrderVersion: current.version,
       expectedOrderStatus: current.status, providerPaymentId: result.paymentId,
       providerOrderId: typeof result.orderId === 'string' ? result.orderId : null,
+      providerCheckoutUrl: typeof result.checkoutUrl === 'string' ? result.checkoutUrl : null,
       paymentStatus: result.status, orderStatus: target });
   }
 

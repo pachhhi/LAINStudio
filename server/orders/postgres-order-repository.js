@@ -83,7 +83,8 @@ export class PostgresOrderRepository extends OrderRepository {
 
   async listPaymentAttemptsForOrder(orderId) {
     const result = await this.pool.query(`SELECT * FROM payment_attempts WHERE order_id=$1 ORDER BY created_at DESC,id DESC`, [orderId]);
-    return result.rows.map(row => ({ id: row.id, orderId: row.order_id, provider: row.provider,
+    return result.rows.map(row => ({ id: row.id, orderId: row.order_id, provider: row.provider, paymentFlow: row.payment_flow,
+      providerCheckoutUrl: row.provider_checkout_url,
       providerOrderId: row.provider_order_id, providerPaymentId: row.provider_payment_id, status: row.status,
       reconciliationFailures: row.reconciliation_failures, reconciliationLastError: row.reconciliation_last_error,
       reconciliationNeedsReview: row.reconciliation_needs_review, createdAt: new Date(row.created_at).toISOString(),
@@ -136,7 +137,7 @@ export class PostgresOrderRepository extends OrderRepository {
     });
   }
 
-  async beginPayment({ orderId, key, fingerprint, provider }) {
+  async beginPayment({ orderId, key, fingerprint, provider, paymentFlow = 'card' }) {
     return this.#transaction(async client => {
       const claimed = await client.query(`INSERT INTO idempotency_keys(key,operation,request_fingerprint,status)
         VALUES($1,'payment',$2,'in_progress') ON CONFLICT(key) DO NOTHING RETURNING key`, [key, fingerprint]);
@@ -144,17 +145,39 @@ export class PostgresOrderRepository extends OrderRepository {
         const existing = (await client.query('SELECT * FROM idempotency_keys WHERE key=$1 FOR UPDATE', [key])).rows[0];
         if (existing.request_fingerprint !== fingerprint) throw new ConflictError('Idempotency key was already used for another payment.');
         const order = await this.#findById(client, existing.resource_id);
-        return { created: false, completed: existing.status === 'completed', order };
+        const attempt = (await client.query('SELECT * FROM payment_attempts WHERE idempotency_key=$1 LIMIT 1', [key])).rows[0];
+        return { created: false, completed: existing.status === 'completed', order,
+          ...(attempt ? { attemptId: attempt.id, paymentFlow: attempt.payment_flow, providerOrderId: attempt.provider_order_id,
+            providerCheckoutUrl: attempt.provider_checkout_url } : {}) };
       }
       const locked = await client.query('SELECT version,status FROM orders WHERE id=$1 FOR UPDATE', [orderId]);
       if (!locked.rowCount) throw new NotFoundError('Order not found.');
       if (!['pending', 'failed'].includes(locked.rows[0].status)) throw new ConflictError(`Cannot start payment from ${locked.rows[0].status}.`);
       const attemptId = randomUUID();
       await client.query('UPDATE idempotency_keys SET resource_id=$2,updated_at=now() WHERE key=$1', [key, orderId]);
-      await client.query(`INSERT INTO payment_attempts(id,order_id,provider,idempotency_key,provider_idempotency_key,status,request_fingerprint)
-        VALUES($1,$2,$3,$4,$5,'created',$6)`, [attemptId, orderId, provider, key, attemptId, fingerprint]);
+      await client.query(`INSERT INTO payment_attempts(id,order_id,provider,idempotency_key,provider_idempotency_key,status,request_fingerprint,payment_flow)
+        VALUES($1,$2,$3,$4,$5,'created',$6,$7)`, [attemptId, orderId, provider, key, attemptId, fingerprint, paymentFlow]);
       await client.query(`UPDATE orders SET status='awaiting_payment',updated_at=now(),version=version+1 WHERE id=$1`, [orderId]);
       return { created: true, attemptId, providerIdempotencyKey: attemptId, order: await this.#findById(client, orderId) };
+    });
+  }
+
+  async completeHostedCheckout({ attemptId, orderId, providerOrderId, providerCheckoutUrl, provider }) {
+    return this.#transaction(async client => {
+      const attempt = await client.query('SELECT * FROM payment_attempts WHERE id=$1 AND order_id=$2 FOR UPDATE', [attemptId, orderId]);
+      if (!attempt.rowCount) throw new NotFoundError('Payment attempt not found.');
+      if (attempt.rows[0].payment_flow !== 'checkout_pro') throw new ConflictError('Payment attempt flow does not match.');
+      const current = await client.query('SELECT status FROM orders WHERE id=$1 FOR UPDATE', [orderId]);
+      if (!current.rowCount) throw new NotFoundError('Order not found.');
+      const retry = current.rows[0].status === 'processing' && attempt.rows[0].provider_order_id === providerOrderId;
+      if (current.rows[0].status !== 'awaiting_payment' && !retry) throw new ConflictError(`Cannot complete hosted checkout from ${current.rows[0].status}.`);
+      if (attempt.rows[0].provider_order_id && attempt.rows[0].provider_order_id !== providerOrderId) throw new ConflictError('Payment provider identifiers do not match the existing attempt.');
+      await client.query(`UPDATE payment_attempts SET status='pending',provider_order_id=$2,provider_checkout_url=$3,updated_at=now() WHERE id=$1`,
+        [attemptId, providerOrderId, providerCheckoutUrl]);
+      if (!retry) await client.query(`UPDATE orders SET status='processing',payment_provider=$2,provider_order_id=$3,updated_at=now(),version=version+1 WHERE id=$1`,
+        [orderId, provider, providerOrderId]);
+      await client.query(`UPDATE idempotency_keys SET status='completed',updated_at=now() WHERE key=$1`, [attempt.rows[0].idempotency_key]);
+      return { order: await this.#findById(client, orderId), checkoutUrl: providerCheckoutUrl };
     });
   }
 
@@ -218,22 +241,23 @@ export class PostgresOrderRepository extends OrderRepository {
       [provider, providerPaymentId || null, safeExternalReference]);
     if (!result.rowCount) return null;
     const row = result.rows[0];
-    return { id: row.id, orderId: row.order_id, provider: row.provider, providerPaymentId: row.provider_payment_id, providerOrderId: row.provider_order_id,
+    return { id: row.id, orderId: row.order_id, provider: row.provider, paymentFlow: row.payment_flow,
+      providerCheckoutUrl: row.provider_checkout_url, providerPaymentId: row.provider_payment_id, providerOrderId: row.provider_order_id,
       providerIdempotencyKey: row.provider_idempotency_key, status: row.status, idempotencyKey: row.idempotency_key,
       createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(), order: await this.findById(row.order_id) };
   }
 
-  async reconcilePayment({ attemptId, expectedOrderVersion, expectedOrderStatus, providerPaymentId, providerOrderId = null, paymentStatus, orderStatus }) {
+  async reconcilePayment({ attemptId, expectedOrderVersion, expectedOrderStatus, providerPaymentId, providerOrderId = null, providerCheckoutUrl = null, paymentStatus, orderStatus }) {
     return this.#transaction(async client => {
       const attempt = await client.query('SELECT order_id,provider,idempotency_key FROM payment_attempts WHERE id=$1 FOR UPDATE', [attemptId]);
       if (!attempt.rowCount) return null;
-      const updated = await client.query(`UPDATE orders SET status=$4,payment_provider=$5,payment_id=$6,provider_order_id=$7,updated_at=now(),version=version+1
+      const updated = await client.query(`UPDATE orders SET status=$4,payment_provider=$5,payment_id=COALESCE($6,payment_id),provider_order_id=COALESCE($7,provider_order_id),updated_at=now(),version=version+1
         WHERE id=$1 AND version=$2 AND status=$3 RETURNING id`, [attempt.rows[0].order_id, expectedOrderVersion, expectedOrderStatus, orderStatus, attempt.rows[0].provider, providerPaymentId, providerOrderId]);
       if (!updated.rowCount) throw new ConflictError('Order was modified concurrently.');
-      await client.query(`UPDATE payment_attempts SET status=$2::text,provider_payment_id=$3,provider_order_id=$4,
+      await client.query(`UPDATE payment_attempts SET status=$2::text,provider_payment_id=COALESCE($3,provider_payment_id),provider_order_id=COALESCE($4,provider_order_id),provider_checkout_url=COALESCE($5,provider_checkout_url),
         reconciliation_monitor_until=CASE WHEN $2::text IN ('approved','partially_refunded','chargeback')
           THEN COALESCE(reconciliation_monitor_until,now()+interval '30 days') ELSE reconciliation_monitor_until END,
-        updated_at=now() WHERE id=$1`, [attemptId, paymentStatus, providerPaymentId, providerOrderId]);
+        updated_at=now() WHERE id=$1`, [attemptId, paymentStatus, providerPaymentId, providerOrderId, providerCheckoutUrl]);
       await client.query(`UPDATE idempotency_keys SET status='completed',updated_at=now() WHERE key=$1`, [attempt.rows[0].idempotency_key]);
       return this.#findById(client, attempt.rows[0].order_id);
     });

@@ -95,6 +95,20 @@ export async function createPayment(orderId, cardData, { idempotencyKey, ...opti
   return body.order;
 }
 
+export async function createHostedCheckout(orderId, { idempotencyKey, ...options } = {}) {
+  const body = await paymentRequest(`/api/orders/${encodeURIComponent(orderId)}/checkout-pro`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }, body: '{}'
+  }, options);
+  if (!body.order || typeof body.order.status !== 'string' || typeof body.checkoutUrl !== 'string') {
+    throw new Error('The payment service returned an invalid hosted checkout.');
+  }
+  let url;
+  try { url = new URL(body.checkoutUrl); } catch { throw new Error('The payment service returned an invalid hosted checkout.'); }
+  if (url.protocol !== 'https:' || !['mercadopago.com.ar', 'www.mercadopago.com.ar'].includes(url.hostname)
+    || !url.pathname.startsWith('/checkout/')) throw new Error('The payment service returned an invalid hosted checkout.');
+  return { order: body.order, checkoutUrl: url.toString() };
+}
+
 export function orderConfirmationUrl(publicOrderId) {
   return `/order.html?id=${encodeURIComponent(publicOrderId)}`;
 }

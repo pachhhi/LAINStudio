@@ -15,7 +15,7 @@ function checkoutOrder(order) {
     status: order.status, createdAt: order.createdAt };
 }
 
-export function createApp({ orderRepository = new InMemoryOrderRepository(), paymentProvider = null, paymentPublicKey = '', paymentEnvironment = paymentProvider?.environment || 'test', webhookSecret = '', shippingProvider = null, catalogService = new CatalogService(), logger = console } = {}) {
+export function createApp({ orderRepository = new InMemoryOrderRepository(), paymentProvider = null, paymentPublicKey = '', paymentEnvironment = paymentProvider?.environment || 'test', webhookSecret = '', publicBaseUrl = '', shippingProvider = null, catalogService = new CatalogService(), logger = console } = {}) {
   const app = express();
   const shippingService = new ShippingService({ catalogService, provider: shippingProvider });
   const orderService = new OrderService({ catalogService, orderRepository, paymentProvider, shippingService });
@@ -58,6 +58,24 @@ export function createApp({ orderRepository = new InMemoryOrderRepository(), pay
     try {
       const order = await orderService.startPayment(request.params.id, { idempotencyKey: request.get('Idempotency-Key'), paymentData: request.body });
       response.status(200).json({ order: checkoutOrder(order) });
+    } catch (error) { next(error); }
+  });
+  app.post('/api/orders/:id/checkout-pro', async (request, response, next) => {
+    try {
+      let base;
+      try { base = new URL(publicBaseUrl); } catch { throw new ValidationError('PUBLIC_BASE_URL must be configured for hosted checkout.'); }
+      if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash) {
+        throw new ValidationError('PUBLIC_BASE_URL must be a valid HTTPS origin.');
+      }
+      const localOrder = await orderService.getById(request.params.id);
+      if (!localOrder) return response.status(404).json({ error: 'Order not found.', code: 'NOT_FOUND' });
+      const returnUrl = new URL('/order.html', base);
+      returnUrl.searchParams.set('id', localOrder.publicOrderId);
+      const result = await orderService.startHostedPayment(request.params.id, {
+        idempotencyKey: request.get('Idempotency-Key'),
+        returnUrls: { successUrl: returnUrl.toString(), failureUrl: returnUrl.toString(), pendingUrl: returnUrl.toString() }
+      });
+      response.status(200).json({ order: checkoutOrder(result.order), checkoutUrl: result.checkoutUrl });
     } catch (error) { next(error); }
   });
   app.get('/api/payments/config', (_request, response) => {

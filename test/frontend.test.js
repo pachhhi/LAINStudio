@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CartStore, CART_STORAGE_KEY } from '../cart-store.js';
 import { CartService } from '../cart-service.js';
-import { createCheckout, createPayment, getPaymentConfig, getPublicOrder, getShippingQuotes, orderConfirmationUrl } from '../checkout-api.js';
+import { createCheckout, createHostedCheckout, createPayment, getPaymentConfig, getPublicOrder, getShippingQuotes, orderConfirmationUrl } from '../checkout-api.js';
 import { canSubmitCheckout, createSubmitGuard, normalizeShippingPrice, resolveDeliverySelection } from '../checkout-submit.js';
 import { CheckoutAttemptStore } from '../checkout-attempt.js';
 import { createApp } from '../server/app.js';
@@ -164,12 +164,26 @@ test('payment API sends only the Brick token and non-sensitive payment fields', 
     issuerId: '1', identification: { type: 'DNI', number: '12345678' } });
 });
 
+test('hosted checkout API sends no card data and accepts only a Mercado Pago checkout URL', async () => {
+  let request;
+  const fetchImpl = async (url, options) => { request = { url, options }; return { ok: true, status: 200, json: async () => ({
+    order: { status: 'processing' }, checkoutUrl: 'https://www.mercadopago.com.ar/checkout/v1/redirect?order_id=ORDTST1'
+  }) }; };
+  const result = await createHostedCheckout('order/id', { idempotencyKey: 'hosted_key_12345678', fetchImpl });
+  assert.equal(request.url, '/api/orders/order%2Fid/checkout-pro'); assert.deepEqual(JSON.parse(request.options.body), {});
+  assert.equal(request.options.headers['Idempotency-Key'], 'hosted_key_12345678'); assert.match(result.checkoutUrl, /mercadopago/);
+  await assert.rejects(createHostedCheckout('order', { idempotencyKey: 'hosted_key_12345678', fetchImpl: async () => ({ ok: true, status: 200,
+    json: async () => ({ order: { status: 'processing' }, checkoutUrl: 'https://evil.example/checkout/' }) }) }), /invalid hosted checkout/);
+});
+
 test('checkout attempt survives refresh, rotates rejected payments and changes for a new cart', () => {
   const data = new Map(); const storage = { getItem: key => data.get(key), setItem: (key, value) => data.set(key, value), removeItem: key => data.delete(key) };
   let sequence = 0; const store = new CheckoutAttemptStore(storage, () => `uuid-${++sequence}`);
   const cart = [{ productId: 'shirt', variantId: 'M', quantity: 1 }];
   const first = store.load(cart); assert.equal(first.checkoutKey, 'uuid-1');
-  const withOrder = store.attachOrder(first, { id: 'order-1' }); assert.equal(withOrder.paymentKey, 'uuid-2');
+  assert.equal(first.paymentFlow, 'card');
+  const hosted = store.selectPaymentFlow(first, 'checkout_pro'); assert.equal(hosted.paymentFlow, 'checkout_pro');
+  const withOrder = store.attachOrder(hosted, { id: 'order-1' }); assert.equal(withOrder.paymentKey, 'uuid-2');
   assert.deepEqual(store.load(cart), withOrder);
   const retry = store.rotatePaymentKey(withOrder); assert.equal(retry.paymentKey, 'uuid-3'); assert.equal(retry.checkoutKey, first.checkoutKey);
   const changedDelivery = store.rotateCheckoutKey(retry, 'coordinate'); assert.equal(changedDelivery.checkoutKey, 'uuid-4'); assert.equal(changedDelivery.deliveryMode, 'coordinate'); assert.equal(changedDelivery.order, undefined); assert.equal(changedDelivery.paymentKey, undefined);

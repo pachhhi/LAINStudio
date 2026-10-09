@@ -51,6 +51,34 @@ test('different concurrent keys cannot start multiple payments on one order', as
   assert.equal(provider.calls, 1); assert.equal(settled.filter(item => item.status === 'fulfilled').length, 1); assert.equal(settled.filter(item => item.status === 'rejected').length, 1);
 });
 
+test('hosted checkout persists one reusable redirect without requiring a payment ID', async () => {
+  const provider = new FakePaymentProvider('pending'); const { service, order } = setup(provider);
+  const options = { idempotencyKey: 'hosted_payment_key_1234', returnUrls: {
+    successUrl: 'https://lain.example/order.html', failureUrl: 'https://lain.example/order.html', pendingUrl: 'https://lain.example/order.html' } };
+  const first = await service.startHostedPayment(order.id, options);
+  const second = await service.startHostedPayment(order.id, options);
+  assert.equal(provider.calls, 1); assert.equal(first.order.status, 'processing'); assert.equal(first.checkoutUrl, second.checkoutUrl);
+  const attempts = await service.orderRepository.listPaymentAttemptsForOrder(order.id);
+  assert.equal(attempts[0].paymentFlow, 'checkout_pro'); assert.equal(attempts[0].providerPaymentId, null);
+});
+
+test('card and hosted checkout cannot create concurrent provider orders for one local order', async () => {
+  const provider = new FakePaymentProvider('approved', { delay: 20 }); const { service, order } = setup(provider);
+  const hosted = service.startHostedPayment(order.id, { idempotencyKey: 'hosted_concurrent_key_1', returnUrls: {
+    successUrl: 'https://lain.example/order.html', failureUrl: 'https://lain.example/order.html', pendingUrl: 'https://lain.example/order.html' } });
+  const card = service.startPayment(order.id, { idempotencyKey: 'card_concurrent_key_1234', paymentData: {} });
+  const settled = await Promise.allSettled([hosted, card]);
+  assert.equal(provider.calls, 1); assert.equal(settled.filter(result => result.status === 'fulfilled').length, 1);
+});
+
+test('ambiguous hosted checkout blocks a second payment key', async () => {
+  const provider = new FakePaymentProvider('timeout'); const { service, order } = setup(provider);
+  const returnUrls = { successUrl: 'https://lain.example/order.html', failureUrl: 'https://lain.example/order.html', pendingUrl: 'https://lain.example/order.html' };
+  await assert.rejects(service.startHostedPayment(order.id, { idempotencyKey: 'hosted_timeout_key_1234', returnUrls }), /provider/i);
+  assert.equal((await service.getById(order.id)).status, 'processing');
+  await assert.rejects(service.startPayment(order.id, { idempotencyKey: 'new_card_key_after_timeout' }), /Cannot start payment from processing/);
+});
+
 test('completed payment retry returns the stored result without another provider call', async () => {
   const provider = new FakePaymentProvider('approved'); const { service, order } = setup(provider); const key = 'completed_payment_key_1234';
   const first = await service.startPayment(order.id, { idempotencyKey: key }); const second = await service.startPayment(order.id, { idempotencyKey: key });

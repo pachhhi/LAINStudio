@@ -118,7 +118,7 @@ test('checkout address hidden state overrides its grid layout', async () => {
   assert.match(css, /\.delivery-address\[hidden\]\s*\{\s*display:\s*none;/);
   const html = await readFile(new URL('../checkout.html', import.meta.url), 'utf8');
   assert.match(html, /checkout\.css\?v=pickup-contract-2/);
-  assert.match(html, /checkout\.js\?v=inline-payment-1/);
+  assert.match(html, /checkout\.js\?v=checkout-pro-1/);
 });
 
 test('checkout mounts the official payment Brick inline after delivery without a duplicate submit button', async () => {

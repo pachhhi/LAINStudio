@@ -153,3 +153,38 @@ test('payment endpoint is backend-idempotent under concurrent HTTP requests', as
   const responses = await Promise.all(Array.from({ length: 8 }, () => request(app).post(`/api/orders/${order.id}/payments`).set('Idempotency-Key', paymentKey).send({})));
   assert.equal(responses.every(response => response.status === 200), true); assert.equal(provider.calls, 1);
 });
+
+test('disabled payment mode exposes no provider and rejects every payment operation', async () => {
+  const repository = new InMemoryOrderRepository();
+  const app = createTestApp({ orderRepository: repository, paymentProvider: null, paymentPublicKey: '', publicBaseUrl: 'https://lain.example' });
+  const config = await request(app).get('/api/payments/config').expect(200);
+  assert.deepEqual(config.body, { configured: false, provider: 'none', environment: 'disabled', publicKey: '' });
+  const order = (await request(app).post('/api/checkout').set('Idempotency-Key', key('disabled_payment_order')).send(payload).expect(201)).body.order;
+  await request(app).post(`/api/orders/${order.id}/payments`).set('Idempotency-Key', key('disabled_card')).send({}).expect(502);
+  await request(app).post(`/api/orders/${order.id}/checkout-pro`).set('Idempotency-Key', key('disabled_hosted')).send({}).expect(502);
+  assert.deepEqual(await repository.listPaymentAttemptsForOrder(order.id), []);
+  assert.equal((await repository.findById(order.id)).status, 'pending');
+});
+
+test('hosted checkout endpoint returns only the durable order and validated redirect', async () => {
+  const provider = new FakePaymentProvider('pending');
+  const app = createTestApp({ paymentProvider: provider, publicBaseUrl: 'https://lain.example' });
+  const order = (await request(app).post('/api/checkout').set('Idempotency-Key', key('hosted_order')).send(payload)).body.order;
+  const paymentKey = key('hosted_payment');
+  const first = await request(app).post(`/api/orders/${order.id}/checkout-pro`).set('Idempotency-Key', paymentKey).send({ injectedStatus: 'approved' }).expect(200);
+  const second = await request(app).post(`/api/orders/${order.id}/checkout-pro`).set('Idempotency-Key', paymentKey).send({}).expect(200);
+  assert.equal(provider.calls, 1); assert.equal(first.body.checkoutUrl, second.body.checkoutUrl);
+  assert.deepEqual(Object.keys(first.body).sort(), ['checkoutUrl', 'order']);
+  assert.equal(provider.lastHostedContext.returnUrls.successUrl, `https://lain.example/order.html?id=${order.publicOrderId}`);
+  assert.equal(first.body.order.status, 'processing');
+});
+
+test('hosted checkout requires a configured HTTPS public base URL', async () => {
+  const provider = new FakePaymentProvider('pending');
+  for (const publicBaseUrl of ['', 'http://lain.example']) {
+    const app = createTestApp({ paymentProvider: provider, publicBaseUrl });
+    const order = (await request(app).post('/api/checkout').set('Idempotency-Key', key(`bad_base_${publicBaseUrl.length}`)).send(payload)).body.order;
+    await request(app).post(`/api/orders/${order.id}/checkout-pro`).set('Idempotency-Key', key(`bad_payment_${publicBaseUrl.length}`)).send({}).expect(400);
+  }
+  assert.equal(provider.calls, 0);
+});

@@ -11,6 +11,7 @@ export class OrderRepository {
   async update(_id, _expectedVersion, _updater) { throw new Error('Not implemented.'); }
   async beginPayment(_options) { throw new Error('Not implemented.'); }
   async completePayment(_options) { throw new Error('Not implemented.'); }
+  async completeHostedCheckout(_options) { throw new Error('Not implemented.'); }
   async markPaymentProcessing(_options) { throw new Error('Not implemented.'); }
   async failPayment(_options) { throw new Error('Not implemented.'); }
   async findPaymentAttempt(_options) { throw new Error('Not implemented.'); }

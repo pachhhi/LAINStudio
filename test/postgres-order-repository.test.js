@@ -137,6 +137,23 @@ test('payment attempts and their idempotency are durable', options, async () => 
   const attempt = await pool.query('SELECT * FROM payment_attempts WHERE id=$1', [claim.attemptId]); assert.equal(attempt.rows[0].status, 'approved');
 });
 
+test('PostgreSQL persists a hosted checkout redirect atomically without a provider payment ID', options, async () => {
+  const order = await service().create(payload, { idempotencyKey: key('hosted_order') });
+  const paymentKey = `payment:${key('hosted_attempt')}`;
+  const claim = await repository.beginPayment({ orderId: order.id, key: paymentKey,
+    fingerprint: `${order.id}:checkout_pro`, provider: 'mercadopago', paymentFlow: 'checkout_pro' });
+  const checkoutUrl = 'https://www.mercadopago.com.ar/checkout/v1/redirect?order_id=ORDTSTHOSTEDDB1';
+  const completed = await repository.completeHostedCheckout({ attemptId: claim.attemptId, orderId: order.id,
+    provider: 'mercadopago', providerOrderId: 'ORDTSTHOSTEDDB1', providerCheckoutUrl: checkoutUrl });
+  const retry = await repository.beginPayment({ orderId: order.id, key: paymentKey,
+    fingerprint: `${order.id}:checkout_pro`, provider: 'mercadopago', paymentFlow: 'checkout_pro' });
+  const row = (await pool.query('SELECT payment_flow,provider_checkout_url,provider_order_id,provider_payment_id,status FROM payment_attempts WHERE id=$1', [claim.attemptId])).rows[0];
+  assert.equal(completed.order.status, 'processing'); assert.equal(completed.checkoutUrl, checkoutUrl);
+  assert.deepEqual(row, { payment_flow: 'checkout_pro', provider_checkout_url: checkoutUrl,
+    provider_order_id: 'ORDTSTHOSTEDDB1', provider_payment_id: null, status: 'pending' });
+  assert.equal(retry.completed, true); assert.equal(retry.providerCheckoutUrl, checkoutUrl);
+});
+
 test('failed payment attempts atomically persist failed attempt and order states', options, async () => {
   const order = await service().create(payload, { idempotencyKey: key('failed_attempt_order') });
   const claim = await repository.beginPayment({ orderId: order.id, key: `payment:${key('failed_attempt')}`, fingerprint: order.id, provider: 'fake' });

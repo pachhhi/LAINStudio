@@ -59,6 +59,51 @@ test('createPayment derives amount/email/reference from durable order and sends 
   assert.equal(JSON.stringify(logs).includes(context.paymentData.token), false);
 });
 
+test('hosted Checkout Pro uses manual Orders without card data and validates its redirect', async () => {
+  let request;
+  const hosted = { id: 'ORDTSTHOSTED1', status: 'created', status_detail: 'created', total_amount: '12345.00', currency: 'ARS',
+    external_reference: context.paymentAttemptId,
+    checkout_url: 'https://www.mercadopago.com.ar/checkout/v1/redirect?order_id=ORDTSTHOSTED1' };
+  const provider = new MercadoPagoProvider({ accessToken: 'TEST', environment: 'test',
+    fetchImpl: async (url, options) => { request = { url, options }; return response(201, hosted); } });
+  const returnUrl = 'https://lain.example/order.html?id=public-id';
+  const result = await provider.createHostedCheckout(order, { ...context, paymentData: undefined,
+    returnUrls: { successUrl: returnUrl, failureUrl: returnUrl, pendingUrl: returnUrl } });
+  const body = JSON.parse(request.options.body);
+  assert.equal(body.processing_mode, 'manual'); assert.equal(body.transactions, undefined);
+  assert.equal(JSON.stringify(body).includes(context.paymentData.token), false);
+  assert.equal(body.config.online.auto_return, 'all'); assert.equal(body.config.online.success_url, returnUrl);
+  assert.equal(result.paymentId, null); assert.equal(result.status, 'pending'); assert.equal(result.orderId, hosted.id); assert.equal(result.currency, 'ARS');
+  assert.equal(result.checkoutUrl, hosted.checkout_url);
+});
+
+test('hosted Checkout Pro rejects arbitrary, cross-order and cross-environment redirect responses', async () => {
+  const base = { id: 'ORDTSTHOSTED1', status: 'created', total_amount: '12345.00', external_reference: context.paymentAttemptId };
+  const returnUrls = { successUrl: 'https://lain.example/order.html', failureUrl: 'https://lain.example/order.html', pendingUrl: 'https://lain.example/order.html' };
+  for (const checkoutUrl of ['https://evil.example/checkout/',
+    'https://www.mercadopago.com.ar/checkout/v1/redirect?order_id=ORDTSTOTHER']) {
+    const provider = new MercadoPagoProvider({ accessToken: 'TEST', environment: 'test', fetchImpl: async () => response(201, { ...base, checkout_url: checkoutUrl }) });
+    await assert.rejects(provider.createHostedCheckout(order, { ...context, returnUrls }), error => error.indeterminate === true);
+  }
+  const production = new MercadoPagoProvider({ accessToken: 'PROD', environment: 'production', fetchImpl: async () => response(201, {
+    ...base, checkout_url: 'https://www.mercadopago.com.ar/checkout/v1/redirect?order_id=ORDTSTHOSTED1'
+  }) });
+  await assert.rejects(production.createHostedCheckout(order, { ...context, returnUrls }), /malformed/);
+});
+
+test('manual order status may be created without a payment transaction and later gain a PAY id', async () => {
+  let created = true;
+  const provider = new MercadoPagoProvider({ accessToken: 'TEST', environment: 'test', fetchImpl: async () => response(200, created
+    ? { id: 'ORDTSTHOSTED1', status: 'created', status_detail: 'created', total_amount: '12345.00', external_reference: context.paymentAttemptId,
+      checkout_url: 'https://www.mercadopago.com.ar/checkout/v1/redirect?order_id=ORDTSTHOSTED1' }
+    : { ...orderResponse(), id: 'ORDTSTHOSTED1' }) });
+  const pending = await provider.getPaymentStatus('ORDTSTHOSTED1');
+  assert.equal(pending.status, 'pending'); assert.equal(pending.paymentId, null); assert.match(pending.checkoutUrl, /^https:/);
+  created = false;
+  const approved = await provider.getPaymentStatus('ORDTSTHOSTED1');
+  assert.equal(approved.status, 'approved'); assert.equal(approved.paymentId, 'PAY01TEST');
+});
+
 test('Orders API maps accredited and processing responses', async () => {
   for (const [providerStatus, detail, expected] of [['processed', 'accredited', 'approved'], ['processing', 'in_process', 'pending']]) {
     const provider = new MercadoPagoProvider({ accessToken: 'TEST', environment: 'test',
