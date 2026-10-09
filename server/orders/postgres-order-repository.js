@@ -20,7 +20,8 @@ function mapOrder(row, items = []) {
     })),
     subtotal: safeInteger(row.subtotal, 'subtotal'), total: safeInteger(row.total, 'total'), currency: row.currency,
     customer: { name: row.customer_name, email: row.customer_email, phone: row.customer_phone },
-    ...(row.shipping ? { shipping: row.shipping, shippingStatus: row.shipping_status, deliveryAddress: row.delivery_address } : {}),
+    deliveryMode: row.delivery_mode, shippingStatus: row.shipping_status,
+    ...(row.shipping ? { shipping: row.shipping, deliveryAddress: row.delivery_address } : {}),
     status: row.status, paymentProvider: row.payment_provider, paymentId: row.payment_id,
     providerOrderId: row.provider_order_id || null,
     createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(), version: row.version
@@ -90,10 +91,10 @@ export class PostgresOrderRepository extends OrderRepository {
   }
 
   async #insertOrder(client, order) {
-    await client.query(`INSERT INTO orders(id,public_order_id,status,subtotal,total,currency,customer_name,customer_email,customer_phone,payment_provider,payment_id,provider_order_id,shipping,shipping_status,delivery_address,created_at,updated_at,version)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, [order.id, order.publicOrderId, order.status, order.subtotal, order.total, order.currency,
+    await client.query(`INSERT INTO orders(id,public_order_id,status,subtotal,total,currency,customer_name,customer_email,customer_phone,payment_provider,payment_id,provider_order_id,shipping,shipping_status,delivery_address,delivery_mode,created_at,updated_at,version)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`, [order.id, order.publicOrderId, order.status, order.subtotal, order.total, order.currency,
       order.customer.name, order.customer.email, order.customer.phone, order.paymentProvider, order.paymentId,
-      order.providerOrderId || null, order.shipping || null, order.shippingStatus || null, order.deliveryAddress || null, order.createdAt, order.updatedAt, order.version]);
+      order.providerOrderId || null, order.shipping || null, order.shippingStatus, order.deliveryAddress || null, order.deliveryMode, order.createdAt, order.updatedAt, order.version]);
     for (const item of order.items) {
       await client.query(`INSERT INTO order_items(order_id,product_id,product_name,variant_id,color,quantity,unit_price,line_total)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [order.id, item.productId, item.name, item.variantId || null, item.color || null, item.quantity, item.unitPrice, item.lineTotal]);
@@ -159,9 +160,21 @@ export class PostgresOrderRepository extends OrderRepository {
 
   async completePayment({ attemptId, orderId, status, orderStatus, providerPaymentId, providerOrderId = null, provider }) {
     return this.#transaction(async client => {
+      const attempt = await client.query('SELECT status,provider_payment_id,provider_order_id FROM payment_attempts WHERE id=$1 AND order_id=$2 FOR UPDATE', [attemptId, orderId]);
+      if (!attempt.rowCount) throw new NotFoundError('Payment attempt not found.');
       const current = await client.query('SELECT status FROM orders WHERE id=$1 FOR UPDATE', [orderId]);
       if (!current.rowCount) throw new NotFoundError('Order not found.');
-      if (current.rows[0].status !== 'awaiting_payment') throw new ConflictError(`Cannot complete payment from ${current.rows[0].status}.`);
+      if (current.rows[0].status !== 'awaiting_payment') {
+        const settled = ['paid', 'partially_refunded', 'refunded', 'chargeback'].includes(current.rows[0].status)
+          && ['approved', 'partially_refunded', 'refunded', 'chargeback'].includes(attempt.rows[0].status)
+          && attempt.rows[0].provider_payment_id === providerPaymentId
+          && (!attempt.rows[0].provider_order_id || !providerOrderId || attempt.rows[0].provider_order_id === providerOrderId);
+        if (settled) return this.#findById(client, orderId);
+        throw new ConflictError(`Cannot complete payment from ${current.rows[0].status}.`);
+      }
+      if (!['created', 'processing'].includes(attempt.rows[0].status)) {
+        throw new ConflictError(`Cannot complete payment attempt from ${attempt.rows[0].status}.`);
+      }
       await client.query(`UPDATE payment_attempts SET status=$2::text,provider_payment_id=$3,provider_order_id=$4,
         reconciliation_monitor_until=CASE WHEN $2::text='approved' THEN now()+interval '30 days' ELSE reconciliation_monitor_until END,
         reconciliation_next_at=CASE WHEN $2::text='approved' THEN now()+interval '6 hours' ELSE reconciliation_next_at END,
@@ -174,17 +187,25 @@ export class PostgresOrderRepository extends OrderRepository {
 
   async failPayment({ attemptId, orderId }) {
     return this.#transaction(async client => {
-      await client.query(`UPDATE payment_attempts SET status='failed',updated_at=now() WHERE id=$1`, [attemptId]);
-      await client.query(`UPDATE orders SET status='failed',updated_at=now(),version=version+1 WHERE id=$1 AND status='awaiting_payment'`, [orderId]);
-      await client.query(`UPDATE idempotency_keys SET status='failed',updated_at=now() WHERE key=(SELECT idempotency_key FROM payment_attempts WHERE id=$1)`, [attemptId]);
+      const changed = await client.query(`UPDATE payment_attempts SET status='failed',updated_at=now()
+        WHERE id=$1 AND order_id=$2 AND status='created' RETURNING idempotency_key`, [attemptId, orderId]);
+      if (changed.rowCount) {
+        await client.query(`UPDATE orders SET status='failed',updated_at=now(),version=version+1 WHERE id=$1 AND status='awaiting_payment'`, [orderId]);
+        await client.query(`UPDATE idempotency_keys SET status='failed',updated_at=now() WHERE key=$1`, [changed.rows[0].idempotency_key]);
+      }
       return this.#findById(client, orderId);
     });
   }
 
-  async markPaymentProcessing({ attemptId, orderId }) {
+  async markPaymentProcessing({ attemptId, orderId, providerPaymentId = null, providerOrderId = null }) {
     return this.#transaction(async client => {
-      await client.query(`UPDATE payment_attempts SET status='processing',updated_at=now() WHERE id=$1`, [attemptId]);
-      await client.query(`UPDATE orders SET status='processing',updated_at=now(),version=version+1 WHERE id=$1 AND status='awaiting_payment'`, [orderId]);
+      const changed = await client.query(`UPDATE payment_attempts SET status='processing',
+        provider_payment_id=COALESCE(provider_payment_id,$3),provider_order_id=COALESCE(provider_order_id,$4),updated_at=now()
+        WHERE id=$1 AND order_id=$2 AND status IN ('created','processing')
+          AND (provider_payment_id IS NULL OR $3::text IS NULL OR provider_payment_id=$3)
+          AND (provider_order_id IS NULL OR $4::text IS NULL OR provider_order_id=$4)
+        RETURNING id`, [attemptId, orderId, providerPaymentId, providerOrderId]);
+      if (changed.rowCount) await client.query(`UPDATE orders SET status='processing',updated_at=now(),version=version+1 WHERE id=$1 AND status='awaiting_payment'`, [orderId]);
       return this.#findById(client, orderId);
     });
   }

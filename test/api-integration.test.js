@@ -11,7 +11,7 @@ import { createTestCatalog, testProducts } from '../test-support/catalog-fixture
 const item = { productId: 'lain-cap-01', variantId: 'One size', color: 'Black', quantity: 1 };
 const customer = { name: 'API User', email: 'api@example.com' };
 const deliveryAddress = { street: 'Belgrano', streetNumber: '123', apartmentFloor: '2 A', city: 'Merlo', province: 'Buenos Aires', postalCode: '1722' };
-const payload = { items: [item], customer, deliveryAddress, shippingMethodId: 'fake-standard' };
+const payload = { items: [item], customer, deliveryMode: 'home_delivery', deliveryAddress, shippingMethodId: 'fake-standard' };
 const shippingProvider = { name: 'fake-shipping', isConfigured: () => true, quoteHomeDelivery: async () => [{ id: 'fake-standard', name: 'Standard', carrier: 'Fake Carrier', price: 100, estimatedHours: 24 }] };
 const createTestApp = (options = {}) => createApp({ shippingProvider, catalogService: createTestCatalog(), ...options });
 const key = value => `integration_${value}_123456`;
@@ -71,7 +71,7 @@ test('public order access uses an independent identifier and never exposes custo
   await request(app).get(`/api/public/orders/${order.id}`).expect(404);
   await request(app).get(`/api/orders/${order.id}`).expect(404);
   const publicResponse = await request(app).get(`/api/public/orders/${order.publicOrderId}`).expect(200);
-  assert.deepEqual(Object.keys(publicResponse.body.order).sort(), ['createdAt', 'currency', 'items', 'publicOrderId', 'shipping', 'shippingStatus', 'status', 'subtotal', 'total'].sort());
+  assert.deepEqual(Object.keys(publicResponse.body.order).sort(), ['createdAt', 'currency', 'deliveryMode', 'items', 'publicOrderId', 'shipping', 'shippingStatus', 'status', 'subtotal', 'total'].sort());
   const serialized = JSON.stringify(publicResponse.body);
   for (const forbidden of [customer.email, customer.name, 'phone', order.id, 'paymentId', 'paymentProvider', deliveryAddress.street,
     deliveryAddress.streetNumber, deliveryAddress.apartmentFloor, 'deliveryAddress']) assert.equal(serialized.includes(forbidden), false);
@@ -98,6 +98,14 @@ test('security headers are present and cross-origin access is not enabled', asyn
   assert.equal(response.headers['access-control-allow-origin'], undefined);
 });
 
+test('health check reports PostgreSQL readiness without exposing diagnostics', async () => {
+  const healthy = await request(createTestApp()).get('/health').expect(200);
+  assert.deepEqual(healthy.body, { status: 'ok' }); assert.equal(healthy.headers['cache-control'], 'no-store');
+  const repository = new InMemoryOrderRepository(); repository.healthCheck = async () => { throw new Error('postgresql://secret'); };
+  const unavailable = await request(createTestApp({ orderRepository: repository })).get('/health').expect(503);
+  assert.deepEqual(unavailable.body, { status: 'unavailable' }); assert.equal(JSON.stringify(unavailable.body).includes('secret'), false);
+});
+
 test('idempotent duplicate and concurrent checkout requests return one order', async () => {
   const repository = new InMemoryOrderRepository(); const app = createTestApp({ orderRepository: repository });
   const idempotencyKey = key('duplicate');
@@ -118,7 +126,7 @@ test('mass assignment and prototype pollution payloads cannot alter the order or
   const repository = new InMemoryOrderRepository();
   const attackObject = {
     items: [{ ...item, price: 1, unitPrice: 1, constructor: { prototype: { polluted: true } } }],
-    customer, deliveryAddress, shippingMethodId: 'fake-standard', shipping: { price: 1 }, total: 1, status: 'paid', paymentProvider: 'fake', paymentId: 'x', id: 'owned',
+    customer, deliveryMode: 'home_delivery', deliveryAddress, shippingMethodId: 'fake-standard', shipping: { price: 1 }, total: 1, status: 'paid', paymentProvider: 'fake', paymentId: 'x', id: 'owned',
     constructor: { prototype: { polluted: true } }, prototype: { polluted: true }
   };
   Object.defineProperty(attackObject, '__proto__', { value: { polluted: true }, enumerable: true });

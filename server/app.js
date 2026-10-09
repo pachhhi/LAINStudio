@@ -24,10 +24,15 @@ export function createApp({ orderRepository = new InMemoryOrderRepository(), pay
   app.use((request, response, next) => {
     response.set({ 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer',
       'Permissions-Policy': 'camera=(), microphone=(), geolocation=()' });
-    if (request.path.startsWith('/api')) response.set('Cache-Control', 'no-store');
+    if (request.path.startsWith('/api') || request.path === '/health') response.set('Cache-Control', 'no-store');
     next();
   });
   app.use(express.json({ limit: '32kb' }));
+
+  app.get('/health', async (_request, response) => {
+    try { await orderRepository.healthCheck(); response.status(200).json({ status: 'ok' }); }
+    catch { response.status(503).json({ status: 'unavailable' }); }
+  });
 
   const createOrder = async (request, response, next) => {
     try {

@@ -65,15 +65,19 @@ export class EnviopackProvider {
   async request(path, { method = 'GET', body, errorCode = 'shipping_quote_failed' } = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-    let response;
+    let response; let payload;
     try {
       response = await this.fetchImpl(`${this.baseUrl}${path}`, { method, signal: controller.signal,
         headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}) },
         ...(body ? { body: body.toString() } : {}) });
+      try { payload = await response.json(); }
+      catch (error) {
+        if (error?.name === 'AbortError' || controller.signal.aborted) throw error;
+        payload = null;
+      }
     } catch (error) {
       throw new EnviopackProviderError(error?.name === 'AbortError' ? 'Enviopack request timed out.' : 'Enviopack network request failed.', { code: errorCode });
     } finally { clearTimeout(timeout); }
-    const payload = await response.json().catch(() => null);
     if (!response.ok) throw new EnviopackProviderError('Enviopack rejected the request.', { providerStatus: response.status, code: errorCode });
     if (payload == null || typeof payload !== 'object') throw new EnviopackProviderError('Enviopack returned a malformed response.', { code: 'shipping_invalid_provider_response' });
     return payload;
@@ -82,7 +86,7 @@ export class EnviopackProvider {
 
 function normalizeQuote(quote, index) {
   const price = Number(quote?.valor);
-  if (!quote || typeof quote !== 'object' || !Number.isFinite(price) || price < 0) {
+  if (!quote || typeof quote !== 'object' || !Number.isFinite(price) || price <= 0) {
     throw new EnviopackProviderError('Enviopack returned a malformed shipping method.', { code: 'shipping_invalid_provider_response' });
   }
   const carrierId = typeof quote.correo === 'string' && quote.correo ? quote.correo

@@ -7,6 +7,7 @@ export class InMemoryOrderRepository extends OrderRepository {
   #idempotency = new Map();
   #paymentAttempts = new Map();
   constructor() { super(); }
+  async healthCheck() {}
   save(order) {
     if (this.#orders.has(order.id)) throw new Error(`Order ${order.id} already exists.`);
     if (order.publicOrderId && [...this.#orders.values()].some(value => value.publicOrderId === order.publicOrderId)) throw new Error(`Public order ${order.publicOrderId} already exists.`);
@@ -84,7 +85,15 @@ export class InMemoryOrderRepository extends OrderRepository {
     const attempt = this.#paymentAttempts.get(attemptId);
     if (!attempt) throw new NotFoundError('Payment attempt not found.');
     const order = this.#orders.get(orderId);
-    if (order?.status !== 'awaiting_payment') throw new ConflictError(`Cannot complete payment from ${order?.status || 'missing order'}.`);
+    if (order?.status !== 'awaiting_payment') {
+      const settled = ['paid', 'partially_refunded', 'refunded', 'chargeback'].includes(order?.status)
+        && ['approved', 'partially_refunded', 'refunded', 'chargeback'].includes(attempt.status)
+        && attempt.providerPaymentId === providerPaymentId
+        && (!attempt.providerOrderId || !providerOrderId || attempt.providerOrderId === providerOrderId);
+      if (settled) return structuredClone(order);
+      throw new ConflictError(`Cannot complete payment from ${order?.status || 'missing order'}.`);
+    }
+    if (!['created', 'processing'].includes(attempt.status)) throw new ConflictError(`Cannot complete payment attempt from ${attempt.status}.`);
     const now = new Date().toISOString(); Object.assign(attempt, { status, providerPaymentId, providerOrderId, updatedAt: now,
       ...(status === 'approved' ? { reconciliationMonitorUntil: new Date(Date.now() + 30 * 86400_000).toISOString(), reconciliationNextAt: new Date(Date.now() + 6 * 3600_000).toISOString() } : {}) });
     const next = { ...order, status: orderStatus, paymentProvider: provider, paymentId: providerPaymentId, providerOrderId, updatedAt: now, version: order.version + 1 };
@@ -93,16 +102,22 @@ export class InMemoryOrderRepository extends OrderRepository {
 
   async failPayment({ attemptId, orderId }) {
     const attempt = this.#paymentAttempts.get(attemptId); const now = new Date().toISOString();
-    if (attempt) { attempt.status = 'failed'; attempt.updatedAt = now; this.failIdempotency(attempt.idempotencyKey); }
+    if (attempt?.orderId === orderId && attempt.status === 'created') { attempt.status = 'failed'; attempt.updatedAt = now; this.failIdempotency(attempt.idempotencyKey); }
     const order = this.#orders.get(orderId);
-    if (order?.status === 'awaiting_payment') { order.status = 'failed'; order.updatedAt = now; order.version += 1; }
+    if (attempt?.status === 'failed' && order?.status === 'awaiting_payment') { order.status = 'failed'; order.updatedAt = now; order.version += 1; }
     return order ? structuredClone(order) : null;
   }
 
-  async markPaymentProcessing({ attemptId, orderId }) {
+  async markPaymentProcessing({ attemptId, orderId, providerPaymentId = null, providerOrderId = null }) {
     const attempt = this.#paymentAttempts.get(attemptId); const order = this.#orders.get(orderId); const now = new Date().toISOString();
-    if (attempt) { attempt.status = 'processing'; attempt.updatedAt = now; }
-    if (order?.status === 'awaiting_payment') { order.status = 'processing'; order.updatedAt = now; order.version += 1; }
+    if (attempt && attempt.orderId === orderId && (attempt.status === 'created' || attempt.status === 'processing')) {
+      if ((attempt.providerPaymentId && providerPaymentId && attempt.providerPaymentId !== providerPaymentId)
+        || (attempt.providerOrderId && providerOrderId && attempt.providerOrderId !== providerOrderId)) {
+        throw new ConflictError('Payment provider identifiers do not match the existing attempt.');
+      }
+      attempt.status = 'processing'; attempt.providerPaymentId ||= providerPaymentId; attempt.providerOrderId ||= providerOrderId; attempt.updatedAt = now;
+    }
+    if (attempt?.status === 'processing' && order?.status === 'awaiting_payment') { order.status = 'processing'; order.updatedAt = now; order.version += 1; }
     return order ? structuredClone(order) : null;
   }
 

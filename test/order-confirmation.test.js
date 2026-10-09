@@ -15,6 +15,8 @@ test('durable order page loads its state from the public order API', async () =>
   assert.match(script, /invalidOrder/);
   assert.match(script, /order\.status !== 'paid'/);
   assert.match(script, /renderUnconfirmedOrder\(order\)/);
+  assert.match(script, /order\.deliveryMode === 'coordinate'/);
+  assert.match(script, /coordinateDelivery/);
   assert.doesNotMatch(script, /customer\.email|customer\.phone|paymentId|paymentProvider/);
   assert.doesNotMatch(script, /deliveryAddress|streetNumber|apartmentFloor/);
   assert.match(checkout, /renderPayment\(checkoutAttempt\.order\)/);

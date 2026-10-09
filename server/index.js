@@ -6,6 +6,7 @@ import { PaymentReconciler } from './payments/payment-reconciler.js';
 import { resolveMercadoPagoEnvironment } from './payments/payment-environment.js';
 
 const port = Number.parseInt(process.env.PORT || '3000', 10);
+const host = process.env.HOST || '0.0.0.0';
 const databaseUrl = process.env.DATABASE_URL;
 
 async function start() {
@@ -38,8 +39,8 @@ async function start() {
   const app = createApp({ orderRepository, paymentProvider, paymentPublicKey: mercadoPagoPublicKey,
     paymentEnvironment, webhookSecret, shippingProvider });
   const reconciler = paymentProvider ? new PaymentReconciler({ orderRepository, orderService: app.locals.orderService, paymentProvider }) : null;
-  const server = app.listen(port, () => {
-    console.log(`LAIN Store running at http://localhost:${port} (${paymentProvider ? `mercadopago ${paymentEnvironment}` : 'payments disabled'}, ${shippingProvider.isConfigured() ? 'enviopack enabled' : 'shipping disabled'})`);
+  const server = app.listen(port, host, () => {
+    console.log(`LAIN Store listening on ${host}:${port} (${paymentProvider ? `mercadopago ${paymentEnvironment}` : 'payments disabled'}, ${shippingProvider.isConfigured() ? 'enviopack enabled' : 'shipping disabled'})`);
     reconciler?.start();
   });
   const shutdown = () => server.close(() => Promise.resolve(reconciler?.stop()).then(() => orderRepository.close()).finally(() => process.exit(0)));

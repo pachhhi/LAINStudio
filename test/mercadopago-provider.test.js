@@ -40,7 +40,8 @@ test('createPayment derives amount/email/reference from durable order and sends 
     fetchImpl: async (url, options) => { request = { url, options }; return response(201, orderResponse()); },
     logger: { info: (...entry) => logs.push(entry) } });
   const result = await provider.createPayment(order, context);
-  assert.deepEqual(result, { orderId: 'ORDTST01TEST', paymentId: 'PAY01TEST', status: 'approved', statusDetail: 'accredited', externalReference: context.paymentAttemptId });
+  assert.deepEqual(result, { orderId: 'ORDTST01TEST', paymentId: 'PAY01TEST', status: 'approved', statusDetail: 'accredited',
+    externalReference: context.paymentAttemptId, totalAmount: '12345.00' });
   const body = JSON.parse(request.options.body);
   assert.equal(request.url.endsWith('/v1/orders'), true);
   assert.equal(request.options.headers['X-Idempotency-Key'], context.providerIdempotencyKey);
@@ -84,6 +85,31 @@ test('provider handles 4xx, 5xx, malformed response, network errors and timeout 
   await assert.rejects(create(async () => { throw new Error('network'); }).createPayment(order, context), error => error.indeterminate);
   const slow = (_url, { signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(Object.assign(new Error(), { name: 'AbortError' }))));
   await assert.rejects(create(slow).createPayment(order, context), error => error.indeterminate && /timed out/.test(error.message));
+});
+
+test('HTTP 408 and malformed successful Orders responses remain indeterminate', async () => {
+  const create = body => new MercadoPagoProvider({ accessToken: 'TEST', environment: 'test', fetchImpl: async () => response(body.status, body.payload) });
+  await assert.rejects(create({ status: 408, payload: {} }).createPayment(order, context), error => error.indeterminate === true && error.providerStatus === 408);
+  await assert.rejects(create({ status: 201, payload: { status: 'processed' } }).createPayment(order, context), error => error.indeterminate === true);
+});
+
+test('timeout remains active while reading the Mercado Pago response body', async () => {
+  const provider = new MercadoPagoProvider({ accessToken: 'TEST', environment: 'test', timeoutMs: 5,
+    fetchImpl: async (_url, { signal }) => ({ ok: true, status: 201, headers: { get: () => null }, json: () => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+    }) }) });
+  await assert.rejects(provider.createPayment(order, context), error => error.indeterminate === true && /timed out/.test(error.message));
+});
+
+test('synchronous Orders response identity mismatches remain ambiguous', async () => {
+  for (const payload of [
+    { ...orderResponse(), external_reference: '22222222-2222-4222-8222-222222222222' },
+    { ...orderResponse(), total_amount: '999.00' },
+    { ...orderResponse(), currency_id: 'USD' }
+  ]) {
+    const provider = new MercadoPagoProvider({ accessToken: 'TEST', environment: 'test', fetchImpl: async () => response(201, payload) });
+    await assert.rejects(provider.createPayment(order, context), error => error.indeterminate === true && /mismatched/.test(error.message));
+  }
 });
 
 test('getPaymentStatus confirms status server-side', async () => {

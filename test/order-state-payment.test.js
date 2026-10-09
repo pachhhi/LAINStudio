@@ -61,7 +61,61 @@ test('invalid provider responses fail safely', async () => {
   const provider = new FakePaymentProvider('approved'); provider.createPayment = async () => ({ status: 'mystery' });
   const { service, order } = setup(provider);
   await assert.rejects(service.startPayment(order.id, { idempotencyKey: 'invalid_provider_key_1234' }), /invalid response/);
-  assert.equal((await service.getById(order.id)).status, 'failed');
+  assert.equal((await service.getById(order.id)).status, 'processing');
+});
+
+test('mismatched synchronous payment identity is ambiguous and blocks a new payment key', async () => {
+  const provider = new FakePaymentProvider('approved');
+  provider.createPayment = async (order, context) => ({ status: 'approved', paymentId: 'PAY-WRONG', orderId: 'ORDTSTWRONG',
+    externalReference: '22222222-2222-4222-8222-222222222222', totalAmount: String(order.total), currency: order.currency });
+  const { service, order } = setup(provider);
+  await assert.rejects(service.startPayment(order.id, { idempotencyKey: 'identity_mismatch_key_1234' }), error => error.indeterminate === true);
+  assert.equal((await service.getById(order.id)).status, 'processing');
+  await assert.rejects(service.startPayment(order.id, { idempotencyKey: 'different_payment_key_1234' }), /Cannot start payment from processing/);
+});
+
+test('provider approval followed by persistence failure remains processing with provider IDs', async () => {
+  const provider = new FakePaymentProvider('approved'); const repository = new InMemoryOrderRepository();
+  const original = repository.completePayment.bind(repository);
+  repository.completePayment = async () => { throw new Error('database unavailable'); };
+  const service = new OrderService({ catalogService: createTestCatalog(), orderRepository: repository, paymentProvider: provider });
+  const order = service.create(payload);
+  await assert.rejects(service.startPayment(order.id, { idempotencyKey: 'persist_failure_key_1234' }), error => error.indeterminate === true);
+  assert.equal((await service.getById(order.id)).status, 'processing');
+  const [attempt] = repository.listPaymentAttemptsForOrder(order.id);
+  assert.equal(attempt.status, 'processing'); assert.equal(attempt.providerOrderId, 'ORDTSTFAKE1'); assert.equal(attempt.providerPaymentId, 'fake-1');
+  repository.completePayment = original;
+  await assert.rejects(service.startPayment(order.id, { idempotencyKey: 'persist_failure_new_key_1234' }), /Cannot start payment from processing/);
+});
+
+test('late failure and stale approval cannot overwrite approved, refund or chargeback states', async () => {
+  const provider = new FakePaymentProvider('pending'); const { service, order } = setup(provider);
+  await service.startPayment(order.id, { idempotencyKey: 'late_state_key_123456' });
+  const repository = service.orderRepository; const [attempt] = repository.listPaymentAttemptsForOrder(order.id);
+  provider.behavior = 'approved'; await service.reconcileProviderPayment('ORDTSTFAKE1');
+  await repository.failPayment({ attemptId: attempt.id, orderId: order.id });
+  assert.equal((await service.getById(order.id)).status, 'paid');
+  provider.behavior = 'refunded'; await service.reconcileProviderPayment('ORDTSTFAKE1');
+  const stale = await repository.completePayment({ attemptId: attempt.id, orderId: order.id, status: 'approved', orderStatus: 'paid',
+    providerPaymentId: 'fake-1', providerOrderId: 'ORDTSTFAKE1', provider: 'fake' });
+  assert.equal(stale.status, 'refunded'); assert.equal(repository.listPaymentAttemptsForOrder(order.id)[0].status, 'refunded');
+});
+
+test('webhook reconciliation winning before the synchronous approval is idempotent', async () => {
+  let release;
+  const provider = new FakePaymentProvider('approved');
+  provider.createPayment = async (order, context) => new Promise(resolve => { release = () => resolve({ status: 'approved', paymentId: 'PAY-RACE',
+    orderId: 'ORDTSTRACE', externalReference: context.paymentAttemptId, totalAmount: String(order.total), currency: order.currency }); });
+  const { service, order } = setup(provider);
+  const pending = service.startPayment(order.id, { idempotencyKey: 'webhook_race_key_123456' });
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  const [attempt] = service.orderRepository.listPaymentAttemptsForOrder(order.id);
+  const reconciled = await service.reconcileProviderResult({ status: 'approved', paymentId: 'PAY-RACE', orderId: 'ORDTSTRACE',
+    externalReference: attempt.id, totalAmount: String(order.total), currency: order.currency });
+  assert.equal(reconciled.status, 'paid');
+  release();
+  assert.equal((await pending).status, 'paid');
+  assert.equal(service.orderRepository.listPaymentAttemptsForOrder(order.id).length, 1);
 });
 
 test('payment input validation remains a validation error instead of a provider dependency error', async () => {

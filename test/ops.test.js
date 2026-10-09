@@ -13,7 +13,7 @@ const order = { id, publicOrderId: '22222222-2222-4222-8222-222222222222', creat
   items: [{ productId: 'lain-cap-01', name: 'Offline Cap', variantId: 'One size', color: 'Black', quantity: 1, unitPrice: 29000, lineTotal: 29000 }],
   deliveryAddress: { street: 'Belgrano', streetNumber: '123', apartmentFloor: '2 A', city: 'Merlo', province: 'Buenos Aires', postalCode: '1722' },
   shipping: { provider: 'enviopack', carrier: 'enviopack', service: 'Standard', price: 1100, estimatedHours: 12, postalCode: '1722', province: 'Buenos Aires', quotedAt: '2026-10-06T11:59:00.000Z' },
-  shippingStatus: 'selected', paymentProvider: null, paymentId: null };
+  deliveryMode: 'home_delivery', shippingStatus: 'selected', paymentProvider: null, paymentId: null };
 
 function repositoryWithOrder() { const repository = new InMemoryOrderRepository(); repository.save(order); return repository; }
 
@@ -33,9 +33,19 @@ test('Ops lists recent orders and renders the empty state', async () => {
 
 test('Ops renders one order with customer, items, delivery, shipping and payment data', async () => {
   const response = await request(createOpsApp({ orderRepository: repositoryWithOrder() })).get(`/orders/${id}`).expect(200);
-  for (const content of ['ORDER', 'CUSTOMER', 'ITEMS', 'DELIVERY', 'SHIPPING', 'PAYMENT', 'Offline Cap', 'Belgrano', 'enviopack', 'selected']) {
+  for (const content of ['ORDER', 'CUSTOMER', 'ITEMS', 'DELIVERY', 'SHIPPING', 'PAYMENT', 'Offline Cap', 'Belgrano', 'enviopack', 'home_delivery', 'selected']) {
     assert.match(response.text, new RegExp(content));
   }
+});
+
+test('Ops identifies delivery pending coordination without inventing an address', async () => {
+  const coordinated = { ...order, id: '44444444-4444-4444-8444-444444444444', deliveryMode: 'coordinate',
+    shippingStatus: 'coordination_pending', total: order.subtotal };
+  delete coordinated.shipping; delete coordinated.deliveryAddress;
+  const repository = new InMemoryOrderRepository(); repository.save(coordinated);
+  const response = await request(createOpsApp({ orderRepository: repository })).get(`/orders/${coordinated.id}`).expect(200);
+  assert.match(response.text, /coordinate/); assert.match(response.text, /coordination_pending/);
+  assert.doesNotMatch(response.text, /Belgrano|enviopack/);
 });
 
 test('Ops highlights payments requiring manual review and renders safe reconciliation diagnostics', async () => {

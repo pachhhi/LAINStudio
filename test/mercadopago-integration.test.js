@@ -13,7 +13,7 @@ import { createTestCatalog } from '../test-support/catalog-fixture.js';
 
 const shippingProvider = { name: 'fake-shipping', isConfigured: () => true, quoteHomeDelivery: async () => [{ id: 'fake-standard', name: 'Standard', carrier: 'Fake Carrier', price: 100, estimatedHours: 24 }] };
 const payload = { items: [{ productId: 'lain-cap-01', variantId: 'One size', color: 'Black', quantity: 1 }], customer: { name: 'Test', email: 'test@testuser.com' },
-  deliveryAddress: { street: 'Belgrano', streetNumber: '123', apartmentFloor: '', city: 'Merlo', province: 'Buenos Aires', postalCode: '1722' }, shippingMethodId: 'fake-standard' };
+  deliveryMode: 'home_delivery', deliveryAddress: { street: 'Belgrano', streetNumber: '123', apartmentFloor: '', city: 'Merlo', province: 'Buenos Aires', postalCode: '1722' }, shippingMethodId: 'fake-standard' };
 const secret = 'integration-webhook-secret';
 const sign = (dataId, requestId, ts = '1704908010') => `ts=${ts},v1=${createHmac('sha256', secret).update(`id:${dataId.toLowerCase()};request-id:${requestId};ts:${ts};`).digest('hex')}`;
 const providerOrderId = 'ORDTSTFAKE1';

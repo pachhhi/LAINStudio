@@ -38,6 +38,11 @@ export class CheckoutAttemptStore {
     return this.save({ ...attempt, order, paymentKey: attempt.paymentKey || this.uuid() });
   }
 
+  rotateCheckoutKey(attempt, deliveryMode) {
+    const { order: _order, paymentKey: _paymentKey, ...current } = attempt;
+    return this.save({ ...current, checkoutKey: this.uuid(), deliveryMode });
+  }
+
   rotatePaymentKey(attempt) {
     return this.save({ ...attempt, paymentKey: this.uuid() });
   }

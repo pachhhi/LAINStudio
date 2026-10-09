@@ -1,5 +1,6 @@
 /** Storage contract used by OrderService. Implementations must return detached objects. */
 export class OrderRepository {
+  async healthCheck() {}
   async save(_order) { throw new Error('Not implemented.'); }
   async createWithIdempotency(_order, _options) { throw new Error('Not implemented.'); }
   async findById(_id) { throw new Error('Not implemented.'); }

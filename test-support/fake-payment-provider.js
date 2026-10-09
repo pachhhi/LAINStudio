@@ -14,13 +14,14 @@ export class FakePaymentProvider extends PaymentProvider {
     if (this.delay) await new Promise(resolve => setTimeout(resolve, this.delay));
     if (this.behavior === 'timeout') { const error = new Error('simulated timeout'); error.code = 'TIMEOUT'; throw error; }
     if (this.behavior === 'provider_error') throw new Error('simulated provider failure');
-    return { status: this.behavior, paymentId: `fake-${this.calls}`, orderId: `ORDTSTFAKE${this.calls}` };
+    return { status: this.behavior, paymentId: `fake-${this.calls}`, orderId: `ORDTSTFAKE${this.calls}`,
+      externalReference: context.paymentAttemptId, totalAmount: String(order.total), currency: order.currency };
   }
   async getPaymentStatus(orderId) {
     const knownOrder = orderId === 'ORDTSTFAKE1';
     return { orderId, paymentId: knownOrder ? 'fake-1' : 'unknown-payment', status: this.behavior,
       externalReference: knownOrder ? this.lastPaymentAttemptId : null,
-      totalAmount: String(this.lastTotalAmount) };
+      totalAmount: String(this.lastTotalAmount), currency: 'ARS' };
   }
   async refundPayment(paymentId, amount) { return { paymentId, amount, status: 'refunded' }; }
 }

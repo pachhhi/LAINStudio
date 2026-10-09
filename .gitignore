@@ -14,3 +14,8 @@ temp/
 *.backup
 *.sql.gz
 *.tar.gz
+
+# Local high-resolution outfit sources and removed product exports.
+img/outfit/*.png
+img/outfit/web/coplandos-frente.webp
+img/outfit/web/coplandos-espalda.webp

@@ -106,15 +106,17 @@ function renderProducts() {
     results.innerHTML = `<div class="empty-products"><h3>${t('nothing')}</h3><p>${t('tryAnotherCategory')}</p></div>`;
     return;
   }
-  results.innerHTML = `<div class="product-grid">${matching.map(product => `
-    <article class="product-card" data-current-side="front">
+  results.innerHTML = `<div class="product-grid">${matching.map(product => {
+    const previewSide = product.cardPreviewSide === 'back' && productImages(product)[1] ? 'back' : 'front';
+    return `
+    <article class="product-card" data-current-side="${previewSide}">
         <div class="product-image-frame">
           <a class="product-link product-image-link" href="#collection/${encodeURIComponent(product.slug)}" aria-label="${t('viewProduct')} ${escapeHtml(product.name)}">
           <img class="product-image-primary${product.imageFit === 'contain' ? ' product-image-contain' : ''}" src="${escapeHtml(productImages(product)[0])}" alt="${escapeHtml(product.name)}" loading="lazy">
-          ${productImages(product)[1] ? `<img class="product-image-secondary${product.imageFit === 'contain' ? ' product-image-contain' : ''}" data-src="${escapeHtml(productImages(product)[1])}" alt="" width="1254" height="1254">` : ''}
+          ${productImages(product)[1] ? `<img class="product-image-secondary${product.imageFit === 'contain' ? ' product-image-contain' : ''}" data-src="${escapeHtml(productImages(product)[1])}"${previewSide === 'back' ? ` src="${escapeHtml(productImages(product)[1])}"` : ''} alt="" width="1254" height="1254">` : ''}
           ${product.available === false ? `<span class="availability-tag">${t('unavailable')}</span>` : ''}
           </a>
-          ${productImages(product).length > 1 ? `<div class="product-image-switcher" role="group" aria-label="${t('chooseImage')}"><button type="button" data-image-choice="front" aria-label="${t('showFront')}" aria-pressed="true">${t('front')}</button><button type="button" data-image-choice="back" aria-label="${t('showBack')}" aria-pressed="false">${t('back')}</button></div>` : ''}
+          ${productImages(product).length > 1 ? `<div class="product-image-switcher" role="group" aria-label="${t('chooseImage')}"><button type="button" data-image-choice="front" aria-label="${t('showFront')}" aria-pressed="${previewSide === 'front'}">${t('front')}</button><button type="button" data-image-choice="back" aria-label="${t('showBack')}" aria-pressed="${previewSide === 'back'}">${t('back')}</button></div>` : ''}
         </div>
       <a class="product-link" href="#collection/${encodeURIComponent(product.slug)}" aria-label="${t('viewProduct')} ${escapeHtml(product.name)}">
         <div class="product-meta">
@@ -123,7 +125,7 @@ function renderProducts() {
         </div>
       </a>
     </article>
-  `).join('')}</div>`;
+  `; }).join('')}</div>`;
   results.querySelectorAll('[data-image-choice]').forEach(button => button.addEventListener('click', () => {
     const card = button.closest('.product-card');
     const secondary = card.querySelector('.product-image-secondary');

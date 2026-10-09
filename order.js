@@ -33,6 +33,7 @@ function renderUnconfirmedOrder(order) {
 }
 
 function renderOrder(order) {
+  const coordinated = order.deliveryMode === 'coordinate';
   root.setAttribute('aria-busy', 'false');
   root.innerHTML = `<section class="checkout-success order-confirmation">
     <span>${t('paymentApproved')}</span><h1>${t('orderReceived')}</h1><p>${t('orderPaid')}</p>
@@ -40,10 +41,10 @@ function renderOrder(order) {
     <section class="order-summary" aria-labelledby="order-items-title"><h2 id="order-items-title">${t('items')}</h2>
       ${order.items.map(item => `<article class="summary-item"><div><h3>${escapeHtml(item.name)}</h3><p>${escapeHtml([item.variantId, item.color].filter(Boolean).join(' / '))}</p><span>${t('qty')} ${item.quantity}</span></div><strong>${formatPrice(item.lineTotal, order.currency)}</strong></article>`).join('')}
       <div class="summary-total"><span>${t('subtotal')}</span><strong>${formatPrice(order.subtotal, order.currency)}</strong></div>
-      ${order.shipping ? `<div class="summary-total"><span>${t('shipping')} — ${escapeHtml(order.shipping.carrier)} / ${escapeHtml(order.shipping.service)}</span><strong>${formatPrice(order.shipping.price, order.currency)}</strong></div>` : ''}
+      ${order.shipping ? `<div class="summary-total"><span>${t('shipping')} — ${escapeHtml(order.shipping.carrier)} / ${escapeHtml(order.shipping.service)}</span><strong>${formatPrice(order.shipping.price, order.currency)}</strong></div>` : coordinated ? `<div class="summary-total"><span>${t('coordinateDelivery')}</span><strong>${formatPrice(0, order.currency)}</strong></div>` : ''}
       <div class="summary-total"><span>${t('total')}</span><strong>${formatPrice(order.total, order.currency)}</strong></div>
     </section>
-    ${order.shipping ? `<dl><div><dt>${t('shippingStatus')}</dt><dd>${escapeHtml(order.shippingStatus)}</dd></div></dl>` : ''}
+    <dl><div><dt>${t('deliveryMode')}</dt><dd>${t(coordinated ? 'coordinateDelivery' : 'homeDelivery')}</dd></div><div><dt>${t('shippingStatus')}</dt><dd>${escapeHtml(order.shippingStatus)}</dd></div></dl>
     <p class="order-next-step"><strong>${t('nextStep')}</strong><br>${t('nextStepCopy')}</p>
     <a href="/#store">${t('returnStore')}</a>
   </section>`;

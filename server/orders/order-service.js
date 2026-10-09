@@ -39,19 +39,27 @@ export class OrderService {
 
   async createWithShipping(payload, { idempotencyKey } = {}) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new ValidationError('Request payload must be an object.');
+    const deliveryMode = requireString(payload.deliveryMode, 'delivery mode', { max: 30 });
+    if (!['home_delivery', 'coordinate'].includes(deliveryMode)) throw new ValidationError('A valid delivery mode is required.');
+    if (deliveryMode === 'coordinate') {
+      return this.create(payload, { idempotencyKey, deliveryMode, shippingStatus: 'coordination_pending',
+        fingerprintShipping: { deliveryMode } });
+    }
     if (!this.shippingService) throw new DependencyError('Shipping service is not configured.');
     const deliveryAddress = this.normalizeDeliveryAddress(payload.deliveryAddress);
     const selected = await this.shippingService.select({ postalCode: deliveryAddress.postalCode,
       province: deliveryAddress.province, cart: payload.items }, payload.shippingMethodId);
+    const shippingPrice = Math.round(Number(selected.price));
+    if (!Number.isSafeInteger(shippingPrice) || shippingPrice <= 0) throw new DependencyError('Shipping provider returned an invalid price.');
     const quotedAt = this.clock().toISOString();
     const shipping = { provider: selected.provider, service: selected.name, carrier: selected.carrier,
-      price: Math.round(selected.price), estimatedHours: selected.estimatedHours, postalCode: deliveryAddress.postalCode,
+      price: shippingPrice, estimatedHours: selected.estimatedHours, postalCode: deliveryAddress.postalCode,
       province: deliveryAddress.province, quotedAt };
-    const fingerprintShipping = { deliveryAddress, shippingMethodId: payload.shippingMethodId };
-    return this.create(payload, { idempotencyKey, shipping, deliveryAddress, fingerprintShipping });
+    const fingerprintShipping = { deliveryMode, deliveryAddress, shippingMethodId: payload.shippingMethodId };
+    return this.create(payload, { idempotencyKey, shipping, deliveryAddress, deliveryMode, shippingStatus: 'selected', fingerprintShipping });
   }
 
-  create(payload, { idempotencyKey, shipping = null, deliveryAddress = null, fingerprintShipping = null } = {}) {
+  create(payload, { idempotencyKey, shipping = null, deliveryAddress = null, deliveryMode = 'coordinate', shippingStatus = 'coordination_pending', fingerprintShipping = null } = {}) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new ValidationError('Request payload must be an object.');
     const { items, customer } = payload;
     if (!Array.isArray(items) || items.length === 0) throw new ValidationError('The order must contain at least one item.');
@@ -71,7 +79,8 @@ export class OrderService {
       id: this.idGenerator(), publicOrderId: this.publicIdGenerator(), items: resolvedItems, subtotal,
       total: subtotal + (shipping ? Math.round(shipping.price) : 0),
       currency: [...currencies][0], customer: normalizedCustomer,
-      ...(shipping ? { shipping, shippingStatus: 'selected', deliveryAddress } : {}),
+      deliveryMode, shippingStatus,
+      ...(shipping ? { shipping, deliveryAddress } : {}),
       status: 'pending', paymentProvider: null, paymentId: null, providerOrderId: null,
       createdAt: now, updatedAt: now, version: 1
     };
@@ -106,7 +115,9 @@ export class OrderService {
       subtotal: order.subtotal,
       total: order.total,
       currency: order.currency,
-      ...(order.shipping ? { shipping: order.shipping, shippingStatus: order.shippingStatus } : {}),
+      deliveryMode: order.deliveryMode,
+      shippingStatus: order.shippingStatus,
+      ...(order.shipping ? { shipping: order.shipping } : {}),
       status: order.status,
       createdAt: order.createdAt
     };
@@ -142,26 +153,52 @@ export class OrderService {
       if (claim.completed) return claim.order;
       return claim.order;
     }
+    let result; let targetStatus;
     try {
-      const result = await this.paymentProvider.createPayment(claim.order, {
+      result = await this.paymentProvider.createPayment(claim.order, {
         paymentAttemptId: claim.attemptId, providerIdempotencyKey: claim.providerIdempotencyKey, paymentData
       });
       if (!result || !Object.hasOwn(PROVIDER_STATUS_TO_ORDER, result.status) || typeof result.paymentId !== 'string') {
-        throw new DependencyError('Payment provider returned an invalid response.');
+        const error = new DependencyError('Payment provider returned an invalid response.'); error.indeterminate = true; throw error;
       }
-      const targetStatus = PROVIDER_STATUS_TO_ORDER[result.status];
-      if (!ALLOWED_TRANSITIONS[claim.order.status]?.includes(targetStatus)) throw new DependencyError('Payment provider returned an impossible initial status.');
-      return this.orderRepository.completePayment({
+      if (result.externalReference !== claim.attemptId) {
+        const error = new DependencyError('Payment provider returned a mismatched payment reference.'); error.indeterminate = true; throw error;
+      }
+      const decimals = claim.order.currency === 'ARS' || claim.order.currency === 'CLP' || claim.order.currency === 'COP' ? 0 : 2;
+      const expectedAmount = (claim.order.total / (10 ** decimals)).toFixed(2);
+      if (result.totalAmount != null && (!Number.isFinite(Number(result.totalAmount))
+        || Number(result.totalAmount).toFixed(2) !== expectedAmount)) {
+        const error = new DependencyError('Payment provider returned a mismatched order amount.'); error.indeterminate = true; throw error;
+      }
+      if (result.currency != null && result.currency !== claim.order.currency) {
+        const error = new DependencyError('Payment provider returned a mismatched order currency.'); error.indeterminate = true; throw error;
+      }
+      targetStatus = PROVIDER_STATUS_TO_ORDER[result.status];
+      if (!ALLOWED_TRANSITIONS[claim.order.status]?.includes(targetStatus)) {
+        const error = new DependencyError('Payment provider returned an impossible initial status.'); error.indeterminate = true; throw error;
+      }
+    } catch (error) {
+      if (error?.indeterminate) await this.orderRepository.markPaymentProcessing({ attemptId: claim.attemptId, orderId: order.id,
+        providerPaymentId: error.providerPaymentId || null });
+      else await this.orderRepository.failPayment({ attemptId: claim.attemptId, orderId: order.id });
+      error.orderId = order.id; error.paymentAttemptId = claim.attemptId;
+      if (error instanceof ValidationError || error instanceof DependencyError) throw error;
+      throw new DependencyError(error?.code === 'TIMEOUT' ? 'Payment provider timed out.' : 'Payment provider failed.');
+    }
+    try {
+      return await this.orderRepository.completePayment({
         attemptId: claim.attemptId, orderId: order.id, status: result.status,
         orderStatus: targetStatus, provider: this.paymentProvider.name, providerPaymentId: result.paymentId,
         providerOrderId: typeof result.orderId === 'string' ? result.orderId : null
       });
     } catch (error) {
-      if (error?.indeterminate) await this.orderRepository.markPaymentProcessing({ attemptId: claim.attemptId, orderId: order.id });
-      else await this.orderRepository.failPayment({ attemptId: claim.attemptId, orderId: order.id });
+      try { await this.orderRepository.markPaymentProcessing({ attemptId: claim.attemptId, orderId: order.id,
+        providerPaymentId: result.paymentId, providerOrderId: typeof result.orderId === 'string' ? result.orderId : null }); } catch {}
+      error.indeterminate = true;
       error.orderId = order.id; error.paymentAttemptId = claim.attemptId;
       if (error instanceof ValidationError || error instanceof DependencyError) throw error;
-      throw new DependencyError(error?.code === 'TIMEOUT' ? 'Payment provider timed out.' : 'Payment provider failed.');
+      const wrapped = new DependencyError('Payment was approved by the provider but could not be persisted.');
+      wrapped.indeterminate = true; wrapped.orderId = order.id; wrapped.paymentAttemptId = claim.attemptId; throw wrapped;
     }
   }
 
@@ -194,6 +231,9 @@ export class OrderService {
     if (result.totalAmount == null || !Number.isFinite(Number(result.totalAmount))
       || Number(result.totalAmount).toFixed(2) !== expectedAmount) {
       throw new DependencyError('Provider order amount does not match the local order.');
+    }
+    if (result.currency != null && result.currency !== current.currency) {
+      throw new DependencyError('Provider order currency does not match the local order.');
     }
     if (current.status === target && attempt.providerOrderId === result.orderId
       && attempt.providerPaymentId === result.paymentId) return current;

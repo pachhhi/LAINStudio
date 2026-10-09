@@ -24,6 +24,7 @@ a { color: inherit; text-decoration: none; }
 .customer-form select { width: 100%; height: 48px; padding: 0 14px; border: 1px solid #343434; background: var(--bg); color: var(--text); font: inherit; }
 .shipping-address-fields { display: grid; grid-template-columns: 1fr 140px; gap: 14px; }
 .delivery-address { display: grid; gap: 20px; margin: 4px 0 0; padding: 20px 0 0; border: 0; border-top: 1px solid var(--border); }
+.delivery-address[hidden] { display: none; }
 .delivery-address legend { padding: 0 0 20px; font-size: 13px; letter-spacing: .15em; }
 .delivery-street { grid-template-columns: 1fr 110px; }
 .shipping-methods { margin: 4px 0 0; padding: 20px 0 0; border: 0; border-top: 1px solid var(--border); }

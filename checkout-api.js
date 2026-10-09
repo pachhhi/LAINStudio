@@ -1,19 +1,20 @@
-export async function createCheckout(items, customer, { deliveryAddress, shippingMethodId, idempotencyKey, fetchImpl = fetch, timeoutMs = 15000 } = {}) {
+export async function createCheckout(items, customer, { deliveryMode, deliveryAddress, shippingMethodId, idempotencyKey, fetchImpl = fetch, timeoutMs = 15000 } = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  let response;
+  let response; let body;
   try {
     response = await fetchImpl('/api/checkout', {
     method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
-      body: JSON.stringify({ items, customer, deliveryAddress, shippingMethodId }),
+      body: JSON.stringify({ items, customer, deliveryMode, ...(deliveryMode === 'home_delivery' ? { deliveryAddress, shippingMethodId } : {}) }),
       signal: controller.signal
     });
+    try { body = await response.json(); }
+    catch (error) { if (error.name === 'AbortError' || controller.signal.aborted) throw error; body = null; }
   } catch (error) {
     if (error.name === 'AbortError') throw new Error('The checkout request timed out. Please retry.');
     throw new Error('Could not connect to the store. Please retry.');
   } finally { clearTimeout(timeout); }
-  const body = await response.json().catch(() => null);
   if (!body || typeof body !== 'object') throw new Error('The store returned an invalid response.');
   if (!response.ok) throw new Error(body.error || `Could not create the order (${response.status}).`);
   if (!body.order || typeof body.order.id !== 'string' || typeof body.order.publicOrderId !== 'string') throw new Error('The store returned an invalid order.');
@@ -48,14 +49,17 @@ export async function getShippingQuotes(postalCode, province, cart, { fetchImpl 
 async function paymentRequest(url, options, { fetchImpl = fetch, timeoutMs = 20000 } = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  let response;
-  try { response = await fetchImpl(url, { ...options, signal: controller.signal }); }
+  let response; let body;
+  try {
+    response = await fetchImpl(url, { ...options, signal: controller.signal });
+    try { body = await response.json(); }
+    catch (error) { if (error.name === 'AbortError' || controller.signal.aborted) throw error; body = null; }
+  }
   catch (error) {
     const result = new Error(error.name === 'AbortError' ? 'The payment request timed out. Check the order status before retrying.' : 'Could not connect to the payment service. Check the order status before retrying.');
     result.code = error.name === 'AbortError' ? 'PAYMENT_TIMEOUT' : 'PAYMENT_CONNECTION_FAILED';
     throw result;
   } finally { clearTimeout(timeout); }
-  const body = await response.json().catch(() => null);
   if (!body || typeof body !== 'object') throw new Error('The payment service returned an invalid response.');
   if (!response.ok) {
     const error = new Error(body.error || `Could not process the payment (${response.status}).`);

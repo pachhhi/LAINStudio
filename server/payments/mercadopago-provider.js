@@ -111,7 +111,7 @@ export class MercadoPagoProvider extends PaymentProvider {
 
   async request(path, { method = 'GET', body, idempotencyKey, acceptedStatuses = [] } = {}) {
     const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-    let response;
+    let response; let payload;
     try {
       response = await this.fetchImpl(`${this.baseUrl}${path}`, {
         method, signal: controller.signal,
@@ -119,15 +119,19 @@ export class MercadoPagoProvider extends PaymentProvider {
           ...(body ? { 'Content-Type': 'application/json' } : {}), ...(idempotencyKey ? { 'X-Idempotency-Key': idempotencyKey } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {})
       });
+      try { payload = await response.json(); }
+      catch (error) {
+        if (error?.name === 'AbortError' || controller.signal.aborted) throw error;
+        payload = null;
+      }
     } catch (error) {
       throw new MercadoPagoProviderError(error?.name === 'AbortError' ? 'Mercado Pago request timed out.' : 'Mercado Pago network request failed.', { indeterminate: method === 'POST' });
     } finally { clearTimeout(timeout); }
-    const payload = await response.json().catch(() => null);
     const diagnostics = { ...safeProviderDiagnostics(payload, response.status),
       ...(response.headers?.get?.('x-request-id') ? { requestId: response.headers.get('x-request-id') } : {}) };
     this.logger.info?.('Mercado Pago response', diagnostics);
     if (!response.ok && !acceptedStatuses.includes(response.status)) {
-      const indeterminate = response.status >= 500 || response.status === 429;
+      const indeterminate = method === 'POST' && (response.status === 408 || response.status === 429 || response.status >= 500);
       throw new MercadoPagoProviderError('Mercado Pago rejected the request.', {
         indeterminate, providerStatus: response.status, providerError: diagnostics.error,
         providerMessage: diagnostics.message, providerCause: diagnostics.cause,
@@ -166,11 +170,26 @@ export class MercadoPagoProvider extends PaymentProvider {
     const payment = payload.transactions?.payments?.[0];
     if (typeof payload.id !== 'string' || !providerOrderIdPattern(this.environment).test(payload.id)
       || typeof payload.status !== 'string' || typeof payment?.id !== 'string') {
-      throw new MercadoPagoProviderError('Mercado Pago returned a malformed order.');
+      throw new MercadoPagoProviderError('Mercado Pago returned a malformed order.', { indeterminate: true });
     }
-    return { orderId: payload.id, paymentId: payment.id, status: mapMercadoPagoStatus(payload.status, payload.status_detail),
+    if (String(payload.external_reference || '') !== context.paymentAttemptId) {
+      throw new MercadoPagoProviderError('Mercado Pago returned a mismatched payment reference.', { indeterminate: true });
+    }
+    if (payload.total_amount != null && (!Number.isFinite(Number(payload.total_amount))
+      || Number(payload.total_amount).toFixed(2) !== amount)) {
+      throw new MercadoPagoProviderError('Mercado Pago returned a mismatched order amount.', { indeterminate: true });
+    }
+    if (payload.currency_id != null && String(payload.currency_id) !== order.currency) {
+      throw new MercadoPagoProviderError('Mercado Pago returned a mismatched order currency.', { indeterminate: true });
+    }
+    let status;
+    try { status = mapMercadoPagoStatus(payload.status, payload.status_detail); }
+    catch (error) { error.indeterminate = true; throw error; }
+    return { orderId: payload.id, paymentId: payment.id, status,
       statusDetail: payload.status_detail || payment.status_detail || null,
-      externalReference: payload.external_reference || context.paymentAttemptId };
+      externalReference: String(payload.external_reference),
+      totalAmount: payload.total_amount == null ? null : String(payload.total_amount),
+      ...(payload.currency_id == null ? {} : { currency: String(payload.currency_id) }) };
   }
 
   async getPaymentStatus(orderId) {
@@ -187,7 +206,8 @@ export class MercadoPagoProvider extends PaymentProvider {
     return { orderId: payload.id, paymentId: payment.id, status: mapMercadoPagoStatus(payload.status, payload.status_detail),
       statusDetail: payload.status_detail || payment.status_detail || null,
       externalReference: payload.external_reference ? String(payload.external_reference) : null,
-      totalAmount: typeof payload.total_amount === 'string' || typeof payload.total_amount === 'number' ? String(payload.total_amount) : null };
+      totalAmount: typeof payload.total_amount === 'string' || typeof payload.total_amount === 'number' ? String(payload.total_amount) : null,
+      ...(typeof payload.currency_id === 'string' ? { currency: payload.currency_id } : {}) };
   }
 
   async findPaymentOrder({ externalReference, createdAt }) {

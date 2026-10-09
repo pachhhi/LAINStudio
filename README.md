@@ -269,3 +269,40 @@ El proxy productivo debe terminar HTTPS, forzar la redirección desde HTTP y
 aplicar rate limiting. El proveedor de PostgreSQL debe tener backups automáticos
 y una restauración verificada. Estas responsabilidades no se implementan dentro
 del proceso Node.
+
+## Railway
+
+`railway.json` configura Railpack, instalación reproducible con el lockfile,
+migraciones como pre-deploy, `npm start`, reinicio automático y el health check
+`/health`. El servidor escucha explícitamente en `0.0.0.0` y utiliza el `PORT`
+inyectado por Railway. El health check responde `503` si PostgreSQL no está
+disponible y no expone detalles de conexión.
+
+Configurar el servicio web con estas variables, sin guardar sus valores en Git:
+
+```text
+NODE_ENV=production
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+PAYMENT_PROVIDER=mercadopago
+PAYMENT_ENV=test
+MERCADOPAGO_TEST_PUBLIC_KEY=<secret variable>
+MERCADOPAGO_TEST_ACCESS_TOKEN=<secret variable>
+MP_TEST_WEBHOOK_SECRET=<secret variable>
+ENVIOPACK_ENABLED=true
+ENVIOPACK_API_KEY=<secret variable>
+ENVIOPACK_SECRET_KEY=<secret variable>
+```
+
+Usar la referencia privada `DATABASE_URL` del servicio PostgreSQL dentro del
+mismo proyecto; no configurar `DATABASE_PUBLIC_URL` en la aplicación ni habilitar
+el TCP Proxy de la base. La red privada de Railway ya cifra el tráfico interno.
+
+Desplegar inicialmente una sola réplica y mantener desactivado Serverless/App
+Sleeping: el reconciliador comienza con el backend, persiste sus leases y estado
+en PostgreSQL y necesita que el proceso siga activo para ejecutar el ciclo cada
+cinco minutos. Sus locks PostgreSQL permiten agregar otra réplica posteriormente.
+
+Ops no forma parte del proceso web y su bind continúa fijo a `127.0.0.1:4000`.
+No crearle dominio público ni mapear ese puerto. Para el primer deployment puede
+quedar sin ejecutar; cualquier acceso remoto futuro requiere un túnel o gateway
+privado autenticado.

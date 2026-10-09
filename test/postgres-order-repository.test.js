@@ -30,8 +30,21 @@ test('creates and retrieves a durable order with items and SQL-safe customer inp
   const created = await service().create(payload, { idempotencyKey: key('create') });
   const found = await repository.findById(created.id);
   assert.deepEqual(found, created); assert.equal(found.items[0].unitPrice, 29000);
+  assert.equal(found.deliveryMode, 'coordinate'); assert.equal(found.shippingStatus, 'coordination_pending'); assert.equal(found.total, found.subtotal);
   assert.deepEqual(await repository.findByPublicOrderId(created.publicOrderId), created);
   assert.equal((await pool.query("SELECT to_regclass('public.orders') AS table_name")).rows[0].table_name, 'orders');
+});
+
+test('PostgreSQL persists home delivery and enforces coherent delivery combinations', options, async () => {
+  const deliveryAddress = { street: 'Belgrano', streetNumber: '123', apartmentFloor: '', city: 'Merlo', province: 'Buenos Aires', postalCode: '1722' };
+  const shipping = { provider: 'enviopack', service: 'Standard', carrier: 'Carrier', price: 1000, estimatedHours: 24,
+    postalCode: '1722', province: 'Buenos Aires', quotedAt: new Date().toISOString() };
+  const created = await service().create(payload, { idempotencyKey: key('home_delivery'), deliveryMode: 'home_delivery',
+    shippingStatus: 'selected', shipping, deliveryAddress, fingerprintShipping: { deliveryMode: 'home_delivery', deliveryAddress, shippingMethodId: 'standard' } });
+  const found = await repository.findById(created.id);
+  assert.equal(found.deliveryMode, 'home_delivery'); assert.equal(found.shippingStatus, 'selected');
+  assert.equal(found.shipping.price, 1000); assert.equal(found.total, found.subtotal + 1000); assert.deepEqual(found.deliveryAddress, deliveryAddress);
+  await assert.rejects(pool.query(`UPDATE orders SET delivery_mode='coordinate' WHERE id=$1`, [created.id]), /constraint/i);
 });
 
 test('PostgreSQL read model lists newest orders for Ops', options, async () => {
@@ -138,6 +151,33 @@ test('late payment completion cannot overwrite a concurrently cancelled order', 
   await orders.transition(order.id, 'cancelled');
   await assert.rejects(repository.completePayment({ attemptId: claim.attemptId, orderId: order.id, status: 'approved', orderStatus: 'paid', providerPaymentId: 'late-1', provider: 'fake' }), /Cannot complete/);
   assert.equal((await repository.findById(order.id)).status, 'cancelled');
+});
+
+test('late failure cannot overwrite a reconciled approval and repeated approval is idempotent', options, async () => {
+  const order = await service().create(payload, { idempotencyKey: key('late_failure_order') });
+  const claim = await repository.beginPayment({ orderId: order.id, key: `payment:${key('late_failure_attempt')}`, fingerprint: order.id, provider: 'fake' });
+  const processing = await repository.findById(order.id);
+  const paid = await repository.reconcilePayment({ attemptId: claim.attemptId, expectedOrderVersion: processing.version,
+    expectedOrderStatus: 'awaiting_payment', providerPaymentId: 'PAY-RACE', providerOrderId: 'ORDTSTRACE',
+    paymentStatus: 'approved', orderStatus: 'paid' });
+  await repository.failPayment({ attemptId: claim.attemptId, orderId: order.id });
+  const repeated = await repository.completePayment({ attemptId: claim.attemptId, orderId: order.id, status: 'approved', orderStatus: 'paid',
+    providerPaymentId: 'PAY-RACE', providerOrderId: 'ORDTSTRACE', provider: 'fake' });
+  assert.equal(paid.status, 'paid'); assert.equal(repeated.status, 'paid');
+  assert.equal((await pool.query('SELECT status FROM payment_attempts WHERE id=$1', [claim.attemptId])).rows[0].status, 'approved');
+});
+
+test('processing and failure updates cannot downgrade refunded or chargeback attempts', options, async () => {
+  for (const terminal of ['refunded', 'chargeback']) {
+    const order = await service().create(payload, { idempotencyKey: key(`terminal_${terminal}`) });
+    const claim = await repository.beginPayment({ orderId: order.id, key: `payment:${key(`terminal_attempt_${terminal}`)}`, fingerprint: order.id, provider: 'fake' });
+    await pool.query('UPDATE payment_attempts SET status=$2 WHERE id=$1', [claim.attemptId, terminal]);
+    await pool.query('UPDATE orders SET status=$2 WHERE id=$1', [order.id, terminal]);
+    await repository.failPayment({ attemptId: claim.attemptId, orderId: order.id });
+    await repository.markPaymentProcessing({ attemptId: claim.attemptId, orderId: order.id });
+    assert.equal((await pool.query('SELECT status FROM payment_attempts WHERE id=$1', [claim.attemptId])).rows[0].status, terminal);
+    assert.equal((await repository.findById(order.id)).status, terminal);
+  }
 });
 
 test('concurrent payment claims with the same key persist one attempt', options, async () => {

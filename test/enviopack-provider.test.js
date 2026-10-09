@@ -45,6 +45,14 @@ test('provider surfaces authentication and quote failures safely', async () => {
     packages: [{ widthCm: 1, heightCm: 1, lengthCm: 1 }] }), error => error instanceof EnviopackProviderError && error.providerStatus === 500 && error.code === 'shipping_quote_failed');
 });
 
+test('Enviopack timeout remains active while reading the response body', async () => {
+  const provider = new EnviopackProvider({ enabled: true, apiKey: 'key', secretKey: 'secret', timeoutMs: 5,
+    fetchImpl: async (_url, { signal }) => ({ ok: true, status: 200, json: () => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+    }) }) });
+  await assert.rejects(provider.authenticate(), error => error instanceof EnviopackProviderError && /timed out/.test(error.message));
+});
+
 test('shipping service handles unconfigured provider, validation and catalog failures', async () => {
   const catalogService = new CatalogService([product, { ...product, id: 'missing-metadata', shipping: null }]);
   const unavailable = new ShippingService({ catalogService, provider: null });
